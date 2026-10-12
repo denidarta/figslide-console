@@ -322,6 +322,9 @@ async function recordGif(
 			ctx.flags.add(`big-loop:${n.id}`);
 		const rec = await recordLoop(env.session, slideIndex, box, cycleMs);
 		if (rec.warnBig) ctx.flags.add(`gif-over-5mb:${n.id}`);
+		// Cost bounds kicked in (see planLoop): the GIF is shorter / softer than the original loop.
+		if (rec.truncated) ctx.flags.add(`loop-truncated:${n.id}`);
+		if (rec.scale === 1) ctx.flags.add(`gif-scale-1:${n.id}`);
 		ctx.hashes.set(n.gifKey, await env.figma.uploadImage(n.gifKey, rec.bytes));
 		// A new box object (IR boxes alias the captured RawNode boxes); radii resolve against the measured
 		// box, since % radii of the t=0 box can be 0.

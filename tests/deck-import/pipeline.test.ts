@@ -487,6 +487,32 @@ describe("importSlide", () => {
 			);
 		});
 
+		it("flags a loop that was cut short or recorded at scale 1", async () => {
+			(recordLoop as jest.Mock).mockResolvedValue({
+				bytes: new Uint8Array([1]),
+				frames: 150,
+				warnBig: false,
+				scale: 1,
+				truncated: true,
+			});
+			const { flags } = await run();
+			expect(flags).toEqual(
+				expect.arrayContaining(["loop-truncated:s0-n1", "gif-scale-1:s0-n1"]),
+			);
+			// a normal recording adds neither
+			(recordLoop as jest.Mock).mockResolvedValue({
+				bytes: new Uint8Array([1]),
+				frames: 60,
+				warnBig: false,
+				scale: 2,
+				truncated: false,
+			});
+			const again = await run();
+			expect(again.flags.some((f) => /^(loop-truncated|gif-scale-1)/.test(f))).toBe(
+				false,
+			);
+		});
+
 		it("flags a loop that cannot be recorded instead of failing the slide", async () => {
 			(recordLoop as jest.Mock).mockRejectedValue(
 				new Error("screenshot failed"),

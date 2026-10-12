@@ -1,6 +1,10 @@
 import * as path from "node:path";
 import { DeckSession } from "../../src/core/deck-import/capture.js";
-import { chunkBase64, recordLoop } from "../../src/core/deck-import/gif.js";
+import {
+	chunkBase64,
+	planLoop,
+	recordLoop,
+} from "../../src/core/deck-import/gif.js";
 import type { Box, RawNode } from "../../src/core/deck-import/types.js";
 
 jest.setTimeout(120_000);
@@ -17,6 +21,7 @@ function parseGif(b: Uint8Array) {
 		flags & 0x80 ? 3 * 2 ** ((flags & 7) + 1) : 0;
 	let p = 13 + table(b[10]);
 	let frames = 0;
+	let localTables = 0;
 	let delayCs = 0;
 	let loops: number | undefined;
 	while (b[p] !== 0x3b) {
@@ -26,6 +31,7 @@ function parseGif(b: Uint8Array) {
 			p = skipSub(p + 2);
 		} else if (b[p] === 0x2c) {
 			frames++;
+			if (b[p + 9] & 0x80) localTables++;
 			p = skipSub(p + 10 + table(b[p + 9]) + 1);
 		} else throw new Error(`bad GIF block 0x${b[p].toString(16)} at ${p}`);
 	}
@@ -33,6 +39,7 @@ function parseGif(b: Uint8Array) {
 		width: b[6] | (b[7] << 8),
 		height: b[8] | (b[9] << 8),
 		frames,
+		localTables,
 		delayCs,
 		loops,
 	};
@@ -74,6 +81,7 @@ describe("recordLoop (real Chrome)", () => {
 		const shots = jest.spyOn(session.page, "screenshot");
 		const gif = await recordLoop(session, 2, float, 2000);
 
+		expect(gif).toMatchObject({ scale: 2, truncated: false });
 		expect(gif.frames).toBe(60);
 		expect(gif.warnBig).toBe(false);
 		expect(Buffer.from(gif.bytes.subarray(0, 6)).toString("latin1")).toBe(
@@ -84,6 +92,7 @@ describe("recordLoop (real Chrome)", () => {
 			width: float.w * 2,
 			height: float.h * 2,
 			frames: 60,
+			localTables: 0, // one palette for the whole GIF
 			delayCs: 200, // exactly the 2s cycle, not 60 x 3cs
 			loops: 0,
 		});
@@ -92,6 +101,33 @@ describe("recordLoop (real Chrome)", () => {
 		const png = await Promise.all(shots.mock.results.map((r) => r.value));
 		expect(png).toHaveLength(60);
 		expect(Buffer.compare(png[0], png[30])).not.toBe(0);
+	});
+
+	it("drops to 15fps when a cycle would need more than 150 frames at 30fps", async () => {
+		const gif = await recordLoop(session, 2, float, 6000);
+		expect(gif).toMatchObject({ frames: 90, truncated: false });
+		expect(parseGif(gif.bytes)).toMatchObject({ frames: 90, delayCs: 600 });
+	});
+
+	it("caps the recorded cycle at 10s (150 frames at 15fps) and says it was cut", async () => {
+		const gif = await recordLoop(session, 2, float, 12_000);
+		expect(gif).toMatchObject({ frames: 150, truncated: true });
+		expect(parseGif(gif.bytes)).toMatchObject({
+			frames: 150,
+			delayCs: 1000,
+			localTables: 0,
+		});
+	});
+
+	it("records a region over a quarter of the slide at scale 1", async () => {
+		const gif = await recordLoop(
+			session,
+			2,
+			{ x: 0, y: 0, w: 800, h: 700 },
+			200,
+		);
+		expect(gif.scale).toBe(1);
+		expect(parseGif(gif.bytes)).toMatchObject({ width: 800, height: 700 });
 	});
 
 	it("falls back to real time when no CSS animation overlaps the region", async () => {
@@ -130,6 +166,32 @@ describe("recordLoop (real Chrome)", () => {
 
 	it("rejects a non-positive cycle", async () => {
 		await expect(recordLoop(session, 2, float, 0)).rejects.toThrow(/cycleMs/);
+	});
+});
+
+describe("planLoop", () => {
+	const small = { x: 0, y: 0, w: 100, h: 100 };
+
+	it("keeps 30fps up to 150 frames, then 15fps, then cuts the cycle at 10s", () => {
+		const plan = (cycleMs: number) => {
+			const { fps, cycleMs: cycle, truncated } = planLoop(small, cycleMs);
+			return { fps, cycle, truncated };
+		};
+		expect(plan(3000)).toEqual({ fps: 30, cycle: 3000, truncated: false });
+		expect(plan(5000)).toEqual({ fps: 30, cycle: 5000, truncated: false }); // exactly 150
+		expect(plan(5001)).toEqual({ fps: 15, cycle: 5001, truncated: false });
+		expect(plan(10_000)).toEqual({ fps: 15, cycle: 10_000, truncated: false });
+		expect(plan(10_001)).toEqual({ fps: 15, cycle: 10_000, truncated: true });
+		expect(plan(60_000)).toEqual({ fps: 15, cycle: 10_000, truncated: true });
+	});
+
+	it("switches to scale 1 above a quarter of the 1920x1080 slide", () => {
+		const area = (w: number, h: number) =>
+			planLoop({ x: 0, y: 0, w, h }, 1000).scale;
+		expect(area(720, 720)).toBe(2); // exactly 518400
+		expect(area(721, 720)).toBe(1);
+		expect(area(1920, 1080)).toBe(1);
+		expect(area(300, 200)).toBe(2);
 	});
 });
 
