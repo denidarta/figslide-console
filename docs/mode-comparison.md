@@ -49,7 +49,7 @@ The MCP server has **three execution modes** and **four setup methods**:
 - ✅ Automatic updates with `@latest`
 - ✅ Desktop Bridge Plugin support (recommended connection — no debug flags needed)
 - ✅ Variables without Enterprise plan
-- ⚠️ Requires Node.js 18+ and `FIGMA_ACCESS_TOKEN` (manual, one-time)
+- ⚠️ Requires Node.js 22.12+ and `FIGMA_ACCESS_TOKEN` (manual, one-time)
 
 ### Use Cloud Mode (Web AI Clients)
 - ✅ **96 tools** — full write access (create, edit, delete) plus REST API reads
@@ -257,7 +257,7 @@ Variables & Components Data
 
 ### NPX
 **Prerequisites:**
-- Node.js 18+
+- Node.js 22.12+
 - Figma Desktop installed
 - Figma Personal Access Token ([get one](https://help.figma.com/hc/en-us/articles/8085703771159-Manage-personal-access-tokens))
 
@@ -271,7 +271,7 @@ Variables & Components Data
 
 ### Local Git
 **Prerequisites:**
-- Node.js 18+
+- Node.js 22.12+
 - Git
 - Figma Desktop installed
 - Figma Personal Access Token ([get one](https://help.figma.com/hc/en-us/articles/8085703771159-Manage-personal-access-tokens))

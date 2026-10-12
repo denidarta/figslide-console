@@ -98,7 +98,7 @@ New to MCP servers, JSON configs, and terminal commands? These designer-friendly
 
 Before starting, verify you have:
 
-- [ ] **Node.js 18+** installed — Check with `node --version` ([Download](https://nodejs.org))
+- [ ] **Node.js 22.12+** installed — Check with `node --version` ([Download](https://nodejs.org))
 - [ ] **Figma Desktop** installed (not just the web app)
 - [ ] **An MCP client** installed (Claude Desktop, Claude Code, Cursor, Windsurf, etc.)
 
@@ -258,7 +258,7 @@ Create a simple frame with a blue background
 
 ### Prerequisites
 
-- [ ] Node.js 18+ installed
+- [ ] Node.js 22.12+ installed
 - [ ] Git installed
 - [ ] Figma Desktop installed
 - [ ] An MCP client installed (Claude Desktop, Claude Code, Cursor, Windsurf, etc.)
@@ -529,7 +529,7 @@ GitHub Copilot supports MCP servers as of VS Code 1.102+.
 
 - VS Code 1.102 or later
 - GitHub Copilot extension installed and active
-- For full capabilities: Node.js 18+ and Figma Personal Access Token
+- For full capabilities: Node.js 22.12+ and Figma Personal Access Token
 
 ### Quick Setup (CLI)
 
@@ -594,7 +594,7 @@ OpenAI Codex uses a graphical interface for MCP server configuration instead of 
 ### Prerequisites
 
 - [OpenAI Codex desktop app](https://openai.com/codex/get-started/) installed
-- Node.js 18+ installed
+- Node.js 22.12+ installed
 - Figma Desktop installed
 - Figma Personal Access Token ([get one](#step-1-get-your-figma-token-2-min))
 
@@ -652,7 +652,7 @@ For reference, the Codex GUI fields map directly to the [NPX JSON configuration]
 |---------|--------------|-----|
 | "Failed to connect to Figma Desktop" | No transport available | Install Desktop Bridge Plugin and run it in your Figma file |
 | "FIGMA_ACCESS_TOKEN not configured" | Missing or wrong token | Check token in config, must start with `figd_` |
-| "Command not found: node" | Node.js not installed | Install Node.js 18+ from nodejs.org |
+| "Command not found: node" | Node.js not installed | Install Node.js 22.12+ from nodejs.org |
 | Tools not appearing in MCP client | Config not loaded | Restart your MCP client completely |
 | "Port 9223 already in use" | Another MCP instance or orphaned process | Server auto-falls back to 9224–9232. Orphaned processes are auto-cleaned on startup (v1.14.0+). |
 | WebSocket unreachable from Docker host | Server bound to localhost | Set `FIGMA_WS_HOST=0.0.0.0` and expose port with `-p 9223:9223` |
@@ -667,7 +667,7 @@ For reference, the Codex GUI fields map directly to the [NPX JSON configuration]
 
 **Symptom:** Cryptic errors like "parseArgs not exported from 'node:util'"
 
-**Fix:** You need Node.js 18 or higher.
+**Fix:** You need Node.js 22.12 or higher.
 
 ```bash
 # Check your version

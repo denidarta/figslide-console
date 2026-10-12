@@ -73,7 +73,7 @@ Figma Console MCP connects AI assistants (like Claude) to Figma, enabling:
 
 #### Prerequisites
 
-- [ ] **Node.js 18+** — Check with `node --version` ([Download](https://nodejs.org))
+- [ ] **Node.js 22.12+** — Check with `node --version` ([Download](https://nodejs.org))
 - [ ] **Figma Desktop** installed (not just the web app)
 - [ ] **An MCP client** (Claude Code, Cursor, Windsurf, Claude Desktop, etc.)
 
