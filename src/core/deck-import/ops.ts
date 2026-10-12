@@ -94,7 +94,7 @@ function figmaEffect(e: Effect): Record<string, unknown> {
 	};
 }
 
-const firstFamily = (css: string) =>
+export const firstFamily = (css: string) =>
 	css
 		.split(",")[0]
 		.trim()

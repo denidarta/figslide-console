@@ -152,3 +152,38 @@ export interface SlideIR {
 	entrance: EntranceIR | null;
 	flags: string[];
 }
+
+export interface QaIssue {
+	kind:
+		| "empty"
+		| "passthrough"
+		| "raster"
+		| "text-not-text"
+		| "box"
+		| "lines"
+		| "missing"
+		| "font";
+	importId: string | null;
+	figmaId: string;
+	detail: string;
+}
+export interface QaResult {
+	pass: boolean;
+	issues: QaIssue[];
+}
+export type SlideStatus = "pending" | "imported" | "passed" | "flagged";
+export interface ImportState {
+	zip: string;
+	deck: string;
+	/** Keys are 1-based slide numbers. */
+	slides: Record<
+		number,
+		{
+			status: SlideStatus;
+			figmaIds: string[];
+			rounds: number;
+			flags: string[];
+			reason?: string;
+		}
+	>;
+}
