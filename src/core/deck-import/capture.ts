@@ -58,7 +58,12 @@ async function serveDir(srcDir: string) {
 				"Content-Length": st.size,
 			});
 			if (req.method === "HEAD") res.end();
-			else createReadStream(file).pipe(res);
+			else {
+				// A read failure after stat (EACCES/EBUSY/EMFILE) must not become an uncaught exception.
+				createReadStream(file)
+					.on("error", () => res.destroy())
+					.pipe(res);
+			}
 		} catch {
 			fail(404);
 		}
@@ -109,8 +114,13 @@ export class DeckSession {
 			const count = await page.evaluate(prepareDeck);
 			return new DeckSession(page, browser, server, count);
 		} catch (e) {
-			await browser?.close();
-			await server.close();
+			try {
+				await browser?.close();
+			} catch {
+				// keep the original error
+			} finally {
+				await server.close();
+			}
 			throw e;
 		}
 	}
@@ -171,7 +181,10 @@ export class DeckSession {
 	}
 
 	async close(): Promise<void> {
-		await this.browser.close();
-		await this.server.close();
+		try {
+			await this.browser.close();
+		} finally {
+			await this.server.close();
+		}
 	}
 }
