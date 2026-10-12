@@ -65,6 +65,15 @@ describe("DeckSession (real Chrome)", () => {
 			expect(owner?.tag).toBe("h1");
 		});
 
+		it("reports line-box geometry: one 72px x 1.1 line is 79.2px tall, at the h1 top", () => {
+			const tb = nodes.find((n) => n.tag === "#text-block");
+			const owner = nodes.find((n) => n.id === tb?.parentId);
+			expect(tb?.box.h).toBeCloseTo(79.2, 0);
+			expect(Math.abs((tb?.box.y ?? 0) - (owner?.box.y ?? 99))).toBeLessThan(
+				0.5,
+			);
+		});
+
 		it("records the entrance animation before finishing it", () => {
 			expect(anims).toHaveLength(1);
 			expect(anims[0]).toMatchObject({
@@ -183,6 +192,19 @@ describe("DeckSession (real Chrome)", () => {
 				"Line\u00A0one\nline two",
 			);
 			expect(tb?.text?.lineCount).toBe(2);
+		});
+
+		it("text block height is lineCount x line-height (1.2 x font size for normal)", async () => {
+			const { nodes } = await session.capture(2);
+			const tb = nodes.find(
+				(n) =>
+					n.tag === "#text-block" && n.text?.runs[0]?.chars.startsWith("Line"),
+			);
+			const run = tb?.text?.runs[0];
+			expect(run?.lineHeight).toBe("normal");
+			expect(
+				Math.abs((tb?.box.h ?? 0) - 2 * 1.2 * (run?.fontSize ?? 0)),
+			).toBeLessThan(0.5);
 		});
 	});
 

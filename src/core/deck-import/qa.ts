@@ -73,7 +73,11 @@ export function checkSlide(
 		if (n.kind === "text" && d.type !== "TEXT")
 			add("text-not-text", `text became ${d.type}`);
 		const bare = !d.fills.length && !d.strokes && !d.effects;
+		// normalize keeps a paint-less frame for opacity < 1 or an unsupported-CSS flag, neither of which
+		// the dump can show; linting it as empty / pass-through would be an unfixable false positive.
+		const kept = n.kind === "frame" && (n.opacity < 1 || n.flags.length > 0);
 		if (
+			!kept &&
 			(d.type === "FRAME" || d.type === "RECTANGLE") &&
 			bare &&
 			!d.children.length &&
@@ -81,6 +85,7 @@ export function checkSlide(
 		)
 			add("empty", `${d.type} has no fill, stroke, effect or children`);
 		if (
+			!kept &&
 			n.kind === "frame" &&
 			d.type === "FRAME" &&
 			bare &&

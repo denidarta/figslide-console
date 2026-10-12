@@ -75,7 +75,7 @@ export function writeReport(workDir: string, s: ImportState): string {
 	const slideRows = rows
 		.map(
 			(r) => `<section class="${esc(r.status)}">
-<h3>Slide ${r.n}: ${esc(r.status)} (rounds: ${r.rounds})</h3>
+<h3>Slide ${r.n}: ${esc(r.status)} (rounds: ${esc(r.rounds)})</h3>
 ${r.reason ? `<p><b>Reason:</b> ${esc(r.reason)}</p>` : ""}${
 	r.flags.length
 		? `<ul>${r.flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`

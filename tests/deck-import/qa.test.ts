@@ -27,7 +27,12 @@ const RUN: TextRun = {
 	textDecoration: "none",
 };
 
-const frame = (id: string, b: Box, children: NodeIR[] = []): NodeIR => ({
+const frame = (
+	id: string,
+	b: Box,
+	children: NodeIR[] = [],
+	over: { opacity?: number; flags?: string[] } = {},
+): NodeIR => ({
 	kind: "frame",
 	id,
 	box: b,
@@ -36,9 +41,9 @@ const frame = (id: string, b: Box, children: NodeIR[] = []): NodeIR => ({
 	radii: R0,
 	effects: [],
 	clip: false,
-	opacity: 1,
+	opacity: over.opacity ?? 1,
 	children,
-	flags: [],
+	flags: over.flags ?? [],
 });
 const text = (
 	id: string,
@@ -199,6 +204,36 @@ describe("checkSlide", () => {
 		expect(issues[0].figmaId).toBe("f:a");
 	});
 
+	it("does not lint frames kept for opacity < 1 or flags as empty or pass-through", () => {
+		const b = box(0, 0, 50, 50);
+		const keep = (id: string, over: { opacity?: number; flags?: string[] }) => [
+			frame(`${id}-empty`, b, [], over),
+			frame(`${id}-wrap`, b, [image(`${id}-img`, b)], over),
+		];
+		const ir = slide([
+			...keep("o", { opacity: 0.5 }),
+			...keep("f", { flags: ["unsupported:filter"] }),
+			frame("plain-empty", b),
+			frame("plain-wrap", b, [image("plain-img", b)]),
+		]);
+		const wrap = (id: string) =>
+			dn(`${id}-wrap`, "FRAME", b, {
+				fills: [],
+				children: [dn(`${id}-img`, "RECTANGLE", b, { fills: [IMG] })],
+			});
+		const dump = root(
+			dn("o-empty", "FRAME", b, { fills: [] }),
+			wrap("o"),
+			dn("f-empty", "FRAME", b, { fills: [] }),
+			wrap("f"),
+			dn("plain-empty", "FRAME", b, { fills: [] }),
+			wrap("plain"),
+		);
+		const issues = checkSlide(ir, dump).issues;
+		expect(ids(issues)).toEqual(["plain-empty", "plain-wrap"]);
+		expect(kinds(issues)).toEqual(["empty", "passthrough"]);
+	});
+
 	it("does not treat a createNodeFromSvg vector frame as empty or pass-through", () => {
 		const ir = slide([vector("v", box(0, 0, 24, 24))]);
 		const dump = root(
@@ -248,6 +283,15 @@ describe("checkSlide", () => {
 		expect(moved.pass).toBe(false);
 		expect(kinds(at(box(100, 100, 203, 48)).issues)).toEqual(["box"]);
 		expect(kinds(at(box(100, 100, 200, 52)).issues)).toEqual(["box"]);
+	});
+
+	it("box: text uses line-box geometry (lines x line-height), not the content area", () => {
+		// 72px font, line-height 1.1 = 79.2px, two lines: the block is 158.4px tall at the line top.
+		const ir = slide([text("t", box(120, 200, 900, 158.4), 2)]);
+		const at = (b: Box) => checkSlide(ir, root(dtext("t", b, 2)));
+		expect(at(box(120, 200.4, 900, 158.4)).pass).toBe(true);
+		// the content-area rect union (taller, shifted by the half-leading) is what used to be reported
+		expect(kinds(at(box(120, 196.4, 900, 165.6)).issues)).toEqual(["box"]);
 	});
 
 	it("box: a vector fitted into its box (centred, one axis filled) passes", () => {

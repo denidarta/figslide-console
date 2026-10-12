@@ -563,6 +563,8 @@ export function walkSlide(slideIndex: number): PageWalk {
 		let lineCount = 0;
 		let lt = 0;
 		let lb = 0;
+		let ft = 0; // first visual line, for the half-leading offset below
+		let fb = 0;
 		for (const r of seen) {
 			const overlap = Math.min(lb, r.bottom) - Math.max(lt, r.top);
 			if (lineCount && overlap / Math.min(r.height, lb - lt) > 0.5) {
@@ -573,13 +575,24 @@ export function walkSlide(slideIndex: number): PageWalk {
 				lt = r.top;
 				lb = r.bottom;
 			}
+			if (lineCount === 1) {
+				ft = lt;
+				fb = lb;
+			}
 		}
 		const left = Math.min(...seen.map((r) => r.left));
-		const top = Math.min(...seen.map((r) => r.top));
 		const right = Math.max(...seen.map((r) => r.right));
-		const bottom = Math.max(...seen.map((r) => r.bottom));
+		// Range rects are content-area tall; Figma auto-height text is lineCount x line-height (the
+		// same px rule as ops.ts textProps). Report that line-box geometry so placement and QA agree.
+		const lhPx = Math.max(
+			...runs.map((r) =>
+				/^-?[\d.]+px$/.test(r.lineHeight.trim())
+					? Number.parseFloat(r.lineHeight)
+					: r.fontSize * 1.2,
+			),
+		);
 		const box = seen.length
-			? boxOf(left, top, right - left, bottom - top)
+			? boxOf(left, ft - (lhPx - (fb - ft)) / 2, right - left, lineCount * lhPx)
 			: { x: 0, y: 0, w: 0, h: 0 };
 		const tb: RawNode = {
 			id: nextId(),
