@@ -1,6 +1,6 @@
 import { buildEntrance } from "../../src/core/deck-import/entrance.js";
-import { normalizeSlide, ownerMap } from "../../src/core/deck-import/normalize.js";
-import type { NodeIR, RawAnim, RawNode } from "../../src/core/deck-import/types.js";
+import { emittedIds, normalizeSlide, ownerMap } from "../../src/core/deck-import/normalize.js";
+import type { RawAnim, RawNode } from "../../src/core/deck-import/types.js";
 
 const PLAIN: Record<string, string> = {
 	backgroundColor: "rgba(0, 0, 0, 0)",
@@ -77,6 +77,8 @@ const anim = (nodeId: string, firstKeyframe: Record<string, string>, extra: Part
 //   n4 .stairUp  (white frame)
 //   n5 .reveal   (non-drawing wrapper, hoisted away) > n6 frame > n12 text
 //   n13 .group   (non-drawing wrapper inside n1) > n15 plain div > n14 text
+//   n16 .pair    (non-drawing wrapper) > n17, n18 (white frames)
+//   n19 .spinner (non-drawing wrapper) > n20 (looping -> gif)
 //   n7 .loader   (looping -> gif)      n8 child of the gif
 //   n9 h1.rise   (non-drawing, direct text) n10 its text block
 //   n11 .ghost   (hidden)
@@ -97,13 +99,14 @@ const nodes: RawNode[] = [
 	node("s0-n9", "s0-n0"),
 	text("s0-n10", "s0-n9"),
 	node("s0-n11", "s0-n0", { backgroundColor: WHITE }, { hidden: true }),
+	node("s0-n16", "s0-n0"),
+	node("s0-n17", "s0-n16", { backgroundColor: WHITE }),
+	node("s0-n18", "s0-n16", { backgroundColor: WHITE }),
+	node("s0-n19", "s0-n0"),
+	node("s0-n20", "s0-n19", {}, { loop: true }),
 ];
 const { root } = normalizeSlide(nodes, { index: 0, name: "Slide", skipped: false, notes: "" });
-const emitted = (list: NodeIR[]): string[] =>
-	list.flatMap((n) => [n.id, ...(n.kind === "frame" ? emitted(n.children) : [])]);
-const ids = new Set(emitted(root));
-const owner = ownerMap(nodes, root);
-const build = (...anims: RawAnim[]) => buildEntrance(anims, ids, owner);
+const build = (...anims: RawAnim[]) => buildEntrance(anims, emittedIds(root), ownerMap(nodes, root));
 
 describe("buildEntrance", () => {
 	it("npCard: fade + translateY(24px) over 600ms", () => {
@@ -160,6 +163,8 @@ describe("buildEntrance", () => {
 		expect(start("translate(-50%, -50%)")).toBeNull();
 		expect(start("rotate(10deg) garbage(")).toBeNull();
 		expect(start("scale(abc)")).toBeNull();
+		expect(start("scale(0)")).toEqual({ scale: 0.01 });
+		expect(start("scale(-1)")).toEqual({ scale: 0.01 });
 		expect(start("translateX(2em)")).toBeNull();
 	});
 
@@ -192,15 +197,16 @@ describe("buildEntrance", () => {
 	});
 
 	it("only starts nodes that were emitted", () => {
-		expect(buildEntrance([anim("a", { opacity: "0" })], new Set(["b"]), () => "a")).toBeNull();
-		expect(buildEntrance([anim("a", { opacity: "0" })], new Set(["a"]), () => null)).toBeNull();
+		expect(buildEntrance([anim("a", { opacity: "0" })], new Set(["b"]), () => ["a"])).toBeNull();
+		expect(buildEntrance([anim("a", { opacity: "0" })], new Set(["a"]), () => [])).toBeNull();
 	});
 
 	describe("with ownerMap on a captured slide", () => {
-		it("applies a wrapper's entrance to the emitted ancestor, or drops it at the section", () => {
-			expect(build(anim("s0-n13", { opacity: "0" }))?.start).toEqual({ "s0-n1": { opacity: 0 } });
-			// n5's only emitted ancestor is the section, which is not an IR node.
-			expect(build(anim("s0-n5", { opacity: "0" }))).toBeNull();
+		it("starts a hoisted wrapper's emitted children, never its ancestor or siblings", () => {
+			const start = (id: string) => build(anim(id, { opacity: "0" }))?.start;
+			expect(start("s0-n16")).toEqual({ "s0-n17": { opacity: 0 }, "s0-n18": { opacity: 0 } });
+			expect(start("s0-n5")).toEqual({ "s0-n6": { opacity: 0 } });
+			expect(start("s0-n13")).toEqual({ "s0-n14": { opacity: 0 } }); // not n1, which holds n2 too
 		});
 
 		it("animates the text block of a non-drawing element with direct text", () => {
@@ -213,6 +219,7 @@ describe("buildEntrance", () => {
 			expect(build(anim("s0-n8", { opacity: "0" }))).toBeNull();
 			expect(build(anim("s0-n7", { opacity: "0" }))).toBeNull();
 			expect(build(anim("s0-n11", { opacity: "0" }))).toBeNull();
+			expect(build(anim("s0-n19", { opacity: "0" }))).toBeNull(); // wrapper whose only content is a gif
 		});
 
 		it("builds one step for a whole slide", () => {

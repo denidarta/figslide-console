@@ -51,7 +51,7 @@ function fromTransform(transform: string): Start {
 	if (hidden) out.opacity = 0;
 	if (dx) out.dx = dx;
 	if (dy) out.dy = dy;
-	if (scale !== 1) out.scale = scale;
+	if (scale !== 1) out.scale = Math.max(0.01, scale); // Figma cannot size a node to 0
 	return out;
 }
 
@@ -81,23 +81,23 @@ function startOf(firstKeyframe: Record<string, string>): Start {
 }
 
 /**
- * Collapses a slide's finite CSS entrances into one start state for a Smart Animate step. `emittedIds` must
- * not contain gif nodes; animations whose owner is missing from it (or null) are ignored.
+ * Collapses a slide's finite CSS entrances into one start state for a Smart Animate step. Every id
+ * `idOwner` returns gets the animation's start state; ids missing from `emittedIds` (use normalize's
+ * `emittedIds`, which leaves gifs out) are ignored.
  */
 export function buildEntrance(
 	anims: RawAnim[],
 	emittedIds: Set<string>,
-	idOwner: (rawId: string) => string | null,
+	idOwner: (rawId: string) => string[],
 ): EntranceIR | null {
 	const start: EntranceIR["start"] = {};
 	let longest: RawAnim | null = null;
 	for (const a of anims) {
 		if (!Number.isFinite(a.iterations) || a.iterations <= 0) continue;
-		const owner = idOwner(a.nodeId);
-		if (owner === null || !emittedIds.has(owner)) continue;
+		const owners = idOwner(a.nodeId).filter((id) => emittedIds.has(id));
 		const s = startOf(a.firstKeyframe);
-		if (Object.keys(s).length === 0) continue;
-		start[owner] = { ...start[owner], ...s };
+		if (owners.length === 0 || Object.keys(s).length === 0) continue;
+		for (const id of owners) start[id] = { ...start[id], ...s };
 		if (!longest || a.durationMs > longest.durationMs) longest = a;
 	}
 	if (!longest) return null;

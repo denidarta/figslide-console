@@ -1,4 +1,4 @@
-import { normalizeSlide, ownerMap } from "../../src/core/deck-import/normalize.js";
+import { emittedIds, normalizeSlide, ownerMap } from "../../src/core/deck-import/normalize.js";
 import type { NodeIR, RawNode, TextRun } from "../../src/core/deck-import/types.js";
 
 // Computed-style defaults, as walker.page.ts emits them for an unstyled element.
@@ -410,22 +410,38 @@ describe("ownerMap", () => {
 		el("s0-n9", "s0-n8", { backgroundColor: WHITE }),
 		el("s0-n10", "s0-n0", { backgroundColor: WHITE }, { hidden: true }),
 		el("s0-n11", "s0-n10", { backgroundColor: WHITE }),
+		el("s0-n12", "s0-n0"), // hoisted wrapper over a frame and a gif
+		el("s0-n13", "s0-n12", { backgroundColor: WHITE }),
+		el("s0-n14", "s0-n12", {}, { loop: true }),
+		el("s0-n15", "s0-n12", { backgroundColor: WHITE }),
 	];
-	const owner = ownerMap(nodes, normalizeSlide(nodes, meta).root);
+	const root = normalizeSlide(nodes, meta).root;
+	const owner = ownerMap(nodes, root);
 
 	it("maps an emitted node to itself, even when it has a text block", () => {
-		expect([owner("s0-n1"), owner("s0-n2"), owner("s0-n5")]).toEqual(["s0-n1", "s0-n2", "s0-n5"]);
+		expect([owner("s0-n1"), owner("s0-n2"), owner("s0-n5")]).toEqual([["s0-n1"], ["s0-n2"], ["s0-n5"]]);
 	});
 
-	it("maps a hoisted node to its own text block, else its nearest emitted ancestor", () => {
-		expect(owner("s0-n6")).toBe("s0-n7");
-		expect(owner("s0-n3")).toBe("s0-n1");
-		expect(owner("s0-n4")).toBe("s0-n1");
+	it("maps a hoisted node to its own text block, else its topmost emitted descendants", () => {
+		expect(owner("s0-n6")).toEqual(["s0-n7"]);
+		expect(owner("s0-n3")).toEqual(["s0-n5"]);
+		expect(owner("s0-n0")).toEqual(["s0-n1", "s0-n7", "s0-n13", "s0-n15"]);
+		expect(owner("s0-n12")).toEqual(["s0-n13", "s0-n15"]); // the gif is skipped
 	});
 
-	it("returns null for the slide root, unknown ids, gifs and hidden subtrees", () => {
-		expect(
-			["s0-n0", "nope", "s0-n8", "s0-n9", "s0-n10", "s0-n11"].map(owner),
-		).toEqual([null, null, null, null, null, null]);
+	it("never falls back to an ancestor: gifs, their insides, hidden subtrees and unknown ids are empty", () => {
+		expect(["nope", "s0-n8", "s0-n9", "s0-n10", "s0-n11", "s0-n14"].map(owner)).toEqual([[], [], [], [], [], []]);
+	});
+});
+
+describe("emittedIds", () => {
+	it("collects nested ids and leaves gifs out", () => {
+		const nodes = [
+			section(),
+			el("s0-n1", "s0-n0", { backgroundColor: WHITE }),
+			tb("s0-n2", "s0-n1", "a"),
+			el("s0-n3", "s0-n0", {}, { loop: true }),
+		];
+		expect([...emittedIds(normalizeSlide(nodes, meta).root)]).toEqual(["s0-n1", "s0-n2"]);
 	});
 });

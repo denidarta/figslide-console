@@ -96,40 +96,56 @@ const OBJECT_FIT: Record<string, ["FILL" | "FIT", boolean]> = {
 	"scale-down": ["FIT", true],
 };
 
+function eachIR(list: NodeIR[], visit: (n: NodeIR) => void) {
+	for (const n of list) {
+		visit(n);
+		if (n.kind === "frame") eachIR(n.children, visit);
+	}
+}
+
+/** Ids of every emitted IR node except gifs (a gif is one opaque loop, never entrance-animated). */
+export function emittedIds(root: NodeIR[]): Set<string> {
+	const ids = new Set<string>();
+	eachIR(root, (n) => {
+		if (n.kind !== "gif") ids.add(n.id);
+	});
+	return ids;
+}
+
 /**
- * Maps a raw node id to the id of the emitted IR node that stands for it: the node itself, else its own
- * `#text-block` (a non-drawing element with direct text is hoisted away and only its text survives), else
- * its nearest emitted ancestor. Null when nothing stands for it: no emitted ancestor (the slide root is
- * not an IR node), a hidden subtree (dropped by normalizeSlide), or a gif (its animation is the gif).
+ * Maps a raw node id to the emitted IR nodes that carry it: the node itself if emitted; else its own
+ * `#text-block` (a non-drawing element with direct text is hoisted away and only its text survives); else
+ * its topmost emitted descendants. Gifs and anything inside one never count, and hidden subtrees are
+ * dropped by normalizeSlide, so both yield []. An ancestor is never a fallback: animating it would move
+ * unrelated siblings.
  */
-// ponytail: an animated non-drawing wrapper maps to its ancestor, so siblings animate with it; a wrapper's own text block is the only descendant considered.
+// ponytail: a hoisted wrapper with both a text block and child elements maps to the text block only.
 export function ownerMap(
 	nodes: RawNode[],
 	root: NodeIR[],
-): (rawId: string) => string | null {
+): (rawId: string) => string[] {
 	const emitted = new Map<string, NodeIR>();
-	const collect = (list: NodeIR[]) => {
-		for (const n of list) {
-			emitted.set(n.id, n);
-			if (n.kind === "frame") collect(n.children);
-		}
-	};
-	collect(root);
+	eachIR(root, (n) => emitted.set(n.id, n));
 	const byId = new Map(nodes.map((n) => [n.id, n]));
-	const textOf = new Map<string, string>();
+	const kids = new Map<string, RawNode[]>();
 	for (const n of nodes) {
-		if (n.tag === "#text-block" && n.parentId !== null && emitted.has(n.id))
-			textOf.set(n.parentId, n.id);
+		if (n.parentId === null) continue;
+		const list = kids.get(n.parentId);
+		if (list) list.push(n);
+		else kids.set(n.parentId, [n]);
 	}
+	const down = (n: RawNode): string[] => {
+		if (emitted.has(n.id))
+			return emitted.get(n.id)?.kind === "gif" ? [] : [n.id];
+		return n.hidden ? [] : (kids.get(n.id) ?? []).flatMap(down);
+	};
 	return (rawId) => {
-		let n = byId.get(rawId);
-		let hit = n && (emitted.get(n.id) ?? emitted.get(textOf.get(n.id) ?? ""));
-		while (n && !hit) {
-			if (n.hidden) return null;
-			n = n.parentId === null ? undefined : byId.get(n.parentId);
-			hit = n && emitted.get(n.id);
-		}
-		return hit && hit.kind !== "gif" ? hit.id : null;
+		const n = byId.get(rawId);
+		if (!n) return [];
+		const text = (kids.get(n.id) ?? []).find(
+			(c) => c.tag === "#text-block" && emitted.has(c.id),
+		);
+		return emitted.has(n.id) || !text ? down(n) : [text.id];
 	};
 }
 
