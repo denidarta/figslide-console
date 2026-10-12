@@ -414,6 +414,10 @@ describe("ownerMap", () => {
 		el("s0-n13", "s0-n12", { backgroundColor: WHITE }),
 		el("s0-n14", "s0-n12", {}, { loop: true }),
 		el("s0-n15", "s0-n12", { backgroundColor: WHITE }),
+		el("s0-n16", "s0-n0"), // hoisted wrapper with direct text and two element children
+		tb("s0-n17", "s0-n16", "c"),
+		el("s0-n18", "s0-n16", { backgroundColor: WHITE }),
+		el("s0-n19", "s0-n16", { backgroundColor: WHITE }),
 	];
 	const root = normalizeSlide(nodes, meta).root;
 	const owner = ownerMap(nodes, root);
@@ -425,8 +429,12 @@ describe("ownerMap", () => {
 	it("maps a hoisted node to its own text block, else its topmost emitted descendants", () => {
 		expect(owner("s0-n6")).toEqual(["s0-n7"]);
 		expect(owner("s0-n3")).toEqual(["s0-n5"]);
-		expect(owner("s0-n0")).toEqual(["s0-n1", "s0-n7", "s0-n13", "s0-n15"]);
+		expect(owner("s0-n0")).toEqual(["s0-n1", "s0-n7", "s0-n13", "s0-n15", "s0-n17", "s0-n18", "s0-n19"]);
 		expect(owner("s0-n12")).toEqual(["s0-n13", "s0-n15"]); // the gif is skipped
+	});
+
+	it("unions a hoisted wrapper's own text block with its element children, in document order", () => {
+		expect(owner("s0-n16")).toEqual(["s0-n17", "s0-n18", "s0-n19"]);
 	});
 
 	it("never falls back to an ancestor: gifs, their insides, hidden subtrees and unknown ids are empty", () => {

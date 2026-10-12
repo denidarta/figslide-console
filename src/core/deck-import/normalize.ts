@@ -113,13 +113,11 @@ export function emittedIds(root: NodeIR[]): Set<string> {
 }
 
 /**
- * Maps a raw node id to the emitted IR nodes that carry it: the node itself if emitted; else its own
- * `#text-block` (a non-drawing element with direct text is hoisted away and only its text survives); else
- * its topmost emitted descendants. Gifs and anything inside one never count, and hidden subtrees are
- * dropped by normalizeSlide, so both yield []. An ancestor is never a fallback: animating it would move
- * unrelated siblings.
+ * Maps a raw node id to the emitted IR nodes that carry it: the node itself if emitted; else its topmost
+ * emitted descendants in document order (a non-drawing element's own `#text-block` is one of them).
+ * Gifs and anything inside one never count, and hidden subtrees are dropped by normalizeSlide, so both
+ * yield []. An ancestor is never a fallback: animating it would move unrelated siblings.
  */
-// ponytail: a hoisted wrapper with both a text block and child elements maps to the text block only.
 export function ownerMap(
 	nodes: RawNode[],
 	root: NodeIR[],
@@ -141,11 +139,7 @@ export function ownerMap(
 	};
 	return (rawId) => {
 		const n = byId.get(rawId);
-		if (!n) return [];
-		const text = (kids.get(n.id) ?? []).find(
-			(c) => c.tag === "#text-block" && emitted.has(c.id),
-		);
-		return emitted.has(n.id) || !text ? down(n) : [text.id];
+		return n ? down(n) : [];
 	};
 }
 

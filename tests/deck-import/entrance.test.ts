@@ -79,6 +79,7 @@ const anim = (nodeId: string, firstKeyframe: Record<string, string>, extra: Part
 //   n13 .group   (non-drawing wrapper inside n1) > n15 plain div > n14 text
 //   n16 .pair    (non-drawing wrapper) > n17, n18 (white frames)
 //   n19 .spinner (non-drawing wrapper) > n20 (looping -> gif)
+//   n21 .mixed   (non-drawing wrapper, direct text n22) > n23, n24 (white frames)
 //   n7 .loader   (looping -> gif)      n8 child of the gif
 //   n9 h1.rise   (non-drawing, direct text) n10 its text block
 //   n11 .ghost   (hidden)
@@ -104,6 +105,10 @@ const nodes: RawNode[] = [
 	node("s0-n18", "s0-n16", { backgroundColor: WHITE }),
 	node("s0-n19", "s0-n0"),
 	node("s0-n20", "s0-n19", {}, { loop: true }),
+	node("s0-n21", "s0-n0"),
+	text("s0-n22", "s0-n21"),
+	node("s0-n23", "s0-n21", { backgroundColor: WHITE }),
+	node("s0-n24", "s0-n21", { backgroundColor: WHITE }),
 ];
 const { root } = normalizeSlide(nodes, { index: 0, name: "Slide", skipped: false, notes: "" });
 const build = (...anims: RawAnim[]) => buildEntrance(anims, emittedIds(root), ownerMap(nodes, root));
@@ -206,6 +211,11 @@ describe("buildEntrance", () => {
 			const start = (id: string) => build(anim(id, { opacity: "0" }))?.start;
 			expect(start("s0-n16")).toEqual({ "s0-n17": { opacity: 0 }, "s0-n18": { opacity: 0 } });
 			expect(start("s0-n5")).toEqual({ "s0-n6": { opacity: 0 } });
+			expect(start("s0-n21")).toEqual({
+				"s0-n22": { opacity: 0 },
+				"s0-n23": { opacity: 0 },
+				"s0-n24": { opacity: 0 },
+			}); // direct text and element children all start
 			expect(start("s0-n13")).toEqual({ "s0-n14": { opacity: 0 } }); // not n1, which holds n2 too
 		});
 
