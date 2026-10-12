@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DeckSession } from "../../src/core/deck-import/capture.js";
@@ -109,7 +110,7 @@ describe("DeckSession (real Chrome)", () => {
 				naturalH: 16,
 				objectFit: "cover",
 			});
-			expect(img[0].img?.src).toMatch(/^file:\/\/.*assets\/dot\.png$/);
+			expect(img[0].img?.src).toBe("assets/dot.png");
 			expect(nodes.filter((n) => n.svg)).toHaveLength(1);
 			expect(nodes.find((n) => n.svg)?.svg).toMatch(/^<svg[\s>]/);
 			expect(nodes.filter((n) => n.iconClass === "icon-phone")).toHaveLength(1);
@@ -183,6 +184,61 @@ describe("DeckSession (real Chrome)", () => {
 			);
 			expect(tb?.text?.lineCount).toBe(2);
 		});
+	});
+
+	it("captures a skipped slide and reports it as skipped", async () => {
+		const mark = (on: boolean) =>
+			session.page.evaluate((flag) => {
+				const slide = document.querySelector("deck-stage")?.children[1];
+				if (flag) slide?.setAttribute("data-deck-skip", "");
+				else slide?.removeAttribute("data-deck-skip");
+			}, on);
+		await mark(true);
+		try {
+			expect((await session.slideMeta(1)).skipped).toBe(true);
+			const { nodes } = await session.capture(1);
+			expect(nodes.length).toBeGreaterThan(1);
+			expect(nodes[0].hidden).toBeFalsy();
+			expect(nodes[0].box).toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
+		} finally {
+			await mark(false);
+		}
+	});
+
+	it("maps a filled image-slot src back to a srcDir-relative path", async () => {
+		const setSrc = (src: string | null) =>
+			session.page.evaluate((v) => {
+				const slot = document.querySelector("image-slot");
+				if (v) slot?.setAttribute("src", v);
+				else slot?.removeAttribute("src");
+			}, src);
+		await setSrc("assets/dot.png");
+		try {
+			const { nodes } = await session.capture(1);
+			expect(nodes.find((n) => n.slot)?.slot?.src).toBe("assets/dot.png");
+		} finally {
+			await setSrc(null);
+		}
+	});
+
+	it("serves only files under srcDir, to its own loopback origin", async () => {
+		const origin = new URL(session.page.url()).origin;
+		const get = (reqPath: string, host?: string) =>
+			new Promise<number>((resolve, reject) => {
+				http
+					.get(origin + reqPath, host ? { headers: { host } } : {}, (res) => {
+						res.resume();
+						resolve(res.statusCode ?? 0);
+					})
+					.on("error", reject);
+			});
+		expect(await get("/assets/dot.png")).toBe(200);
+		expect(await get("/..%2f..%2fpackage.json")).toBe(403);
+		// the URL parser already folds these into /package.json, which is not under srcDir
+		expect(await get("/%2e%2e/%2e%2e/package.json")).not.toBe(200);
+		expect(await get("/..%5c..%5cpackage.json")).not.toBe(200);
+		expect(await get("/missing.png")).toBe(404);
+		expect(await get("/assets/dot.png", "evil.example")).toBe(403);
 	});
 
 	it("re-captures the active slide with its entrance animations restarted", async () => {

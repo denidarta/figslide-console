@@ -1,7 +1,8 @@
-/* istanbul ignore file -- every function here is serialized into the browser page, where coverage counters do not exist */
 // Page-side code for capture.ts. Each exported function is passed to page.evaluate(), which
 // stringifies it, so each must be fully self-contained: no imports (type imports are erased),
-// no shared helpers between functions, no references to module scope.
+// no shared helpers between functions, no references to module scope. Every closure that runs
+// in the page must live in this file: jest.config.cjs excludes it from coverage instrumentation
+// (cov_* counters do not exist in the page), and inline arrows elsewhere would be instrumented.
 import type { RawAnim, RawNode, TextRun } from "./types.js";
 
 /** JSON has no Infinity: `iterations: null` means infinite. capture.ts maps it back. */
@@ -11,6 +12,29 @@ export type PageAnim = Omit<RawAnim, "iterations"> & {
 export interface PageWalk {
 	nodes: RawNode[];
 	anims: PageAnim[];
+}
+
+/** True once deck-stage is defined and the runtime has rendered its slides. */
+export function deckReady(): boolean {
+	return (
+		!!customElements.get("deck-stage") &&
+		(document.querySelector("deck-stage")?.children.length ?? 0) > 0
+	);
+}
+
+/** One-time page setup: 1:1 scale, hide deck chrome, wait for fonts. Returns the slide count. */
+export async function prepareDeck(): Promise<number> {
+	const deck = document.querySelector("deck-stage") as HTMLElement;
+	deck.setAttribute("noscale", "");
+	// Deck chrome (slide counter, rail) would otherwise appear in screenshots.
+	const hide = document.createElement("style");
+	hide.textContent =
+		".overlay,.rail,.rail-resize,.ctxmenu{display:none!important}";
+	deck.shadowRoot?.appendChild(hide);
+	await document.fonts.ready;
+	return Array.from(deck.children).filter(
+		(e) => !/^(TEMPLATE|SCRIPT|STYLE)$/.test(e.tagName),
+	).length;
 }
 
 /** Slide label / skip flag / speaker notes, resolved the way deck-stage resolves them. */
@@ -79,25 +103,10 @@ export async function settleSlide(slideIndex: number): Promise<void> {
 	} else {
 		deck.goTo(slideIndex);
 	}
+	// Collect animations right away: finite entrances without a fill-mode drop out of
+	// getAnimations() once they finish, so the fonts/images waits must come after.
 	await frame();
-	await document.fonts.ready; // fonts for this slide are only requested once it is laid out
 	await frame();
-	// Natural sizes are only known once images have loaded (capped so a dead URL cannot hang capture).
-	const pending = Array.from(section.querySelectorAll("img"))
-		.filter((im) => !im.complete)
-		.map(
-			(im) =>
-				new Promise<void>((r) => {
-					im.addEventListener("load", () => r(), { once: true });
-					im.addEventListener("error", () => r(), { once: true });
-				}),
-		);
-	if (pending.length) {
-		await Promise.race([
-			Promise.all(pending),
-			new Promise((r) => setTimeout(r, 5000)),
-		]);
-	}
 
 	const up = (n: Node): Node | null =>
 		n.parentNode || (n as ShadowRoot).host || null;
@@ -151,6 +160,24 @@ export async function settleSlide(slideIndex: number): Promise<void> {
 				a.currentTime = 0;
 			}
 		} catch {}
+	}
+	await frame();
+	await document.fonts.ready; // fonts for this slide are only requested once it is laid out
+	// Natural sizes are only known once images have loaded (capped so a dead URL cannot hang capture).
+	const pending = Array.from(section.querySelectorAll("img"))
+		.filter((im) => !im.complete)
+		.map(
+			(im) =>
+				new Promise<void>((r) => {
+					im.addEventListener("load", () => r(), { once: true });
+					im.addEventListener("error", () => r(), { once: true });
+				}),
+		);
+	if (pending.length) {
+		await Promise.race([
+			Promise.all(pending),
+			new Promise((r) => setTimeout(r, 5000)),
+		]);
 	}
 	await frame();
 

@@ -9,6 +9,8 @@ module.exports = {
     '!src/**/*.d.ts',
     '!src/**/*.test.ts',
   ],
+  // Serialized into the browser page by page.evaluate(); coverage counters would not exist there.
+  coveragePathIgnorePatterns: ['/node_modules/', 'walker\\.page\\.ts$'],
   coverageThreshold: {
     global: {
       branches: 70,
