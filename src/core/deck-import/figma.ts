@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { chunkBase64 } from "./gif.js";
 import { SLIDE_SIZE, buildOps, figmaPaints } from "./ops.js";
 import { RUNTIME_SOURCE } from "./runtime.plugin.js";
-import type { FigmaDumpNode, SlideIR } from "./types.js";
+import type { EntranceIR, FigmaDumpNode, SlideIR } from "./types.js";
 
 // A slide with icons, images and a few hundred layers can take well over a minute to build.
 const TIMEOUT_MS = 180_000;
@@ -105,19 +105,15 @@ export class FigmaDeck {
 		});
 		const warnings: string[] = built.warnings ?? [];
 		if (!slide.entrance) return { slideId: built.slideId, warnings };
-		const { start, durationS, curve } = slide.entrance;
 		// The slide exists now, so an entrance failure is a warning, not an error (the runtime removes
 		// a half-made start copy itself).
 		try {
-			const entered = await this.run({
-				cmd: "makeEntrance",
-				slideId: built.slideId,
-				start,
-				transition: { duration: durationS, curve },
-			});
 			return {
 				slideId: built.slideId,
-				enterSlideId: entered.enterSlideId,
+				enterSlideId: await this.rebuildEntrance(
+					built.slideId,
+					slide.entrance,
+				),
 				warnings,
 			};
 		} catch (e) {
@@ -126,6 +122,27 @@ export class FigmaDeck {
 			);
 			return { slideId: built.slideId, warnings };
 		}
+	}
+
+	/**
+	 * Makes the start-state copy of `slideId` from its current content and returns its id. With
+	 * `oldEnterId` that stale copy is removed once the new one is complete (after a patch), so
+	 * Smart Animate always starts from what the slide looks like now. Throws; nothing is left behind.
+	 */
+	async rebuildEntrance(
+		slideId: string,
+		entrance: EntranceIR,
+		oldEnterId?: string,
+	): Promise<string> {
+		const { start, durationS, curve } = entrance;
+		const entered = await this.run({
+			cmd: "makeEntrance",
+			slideId,
+			start,
+			transition: { duration: durationS, curve },
+			replaceId: oldEnterId,
+		});
+		return entered.enterSlideId;
 	}
 
 	async dump(slideId: string): Promise<FigmaDumpNode> {

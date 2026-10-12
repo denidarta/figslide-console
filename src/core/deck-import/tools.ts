@@ -21,6 +21,11 @@ const logger = createChildLogger({ component: "deck-import-tools" });
 const MAX_ISSUES = 10;
 /** Cap on issues / nodes in view and patch output. */
 const MAX_LIST = 50;
+/** Cap on the flags listed per slide in deck_import output (state keeps them all). */
+const MAX_FLAGS = 20;
+/** Slides per deck_import call: each takes a capture, a build and two screenshots. */
+const DEFAULT_LIMIT = 8;
+const MAX_LIMIT = 20;
 const ROUND_LIMIT = 3;
 const OVER_LIMIT_PERCENT = 10;
 
@@ -95,13 +100,24 @@ async function openDeck(zipPath: string, deckFile: string) {
 	};
 }
 
-/** At most MAX_LIST items, and a "+N more" marker for the rest, so tool output stays bounded. */
-function capped<T>(list: T[]) {
+/** At most `max` items, and a "+N more" marker for the rest, so tool output stays bounded. */
+function capped<T>(list: T[], max = MAX_LIST) {
 	return {
-		items: list.slice(0, MAX_LIST),
-		more:
-			list.length > MAX_LIST ? `+${list.length - MAX_LIST} more` : undefined,
+		items: list.slice(0, max),
+		more: list.length > max ? `+${list.length - max} more` : undefined,
 	};
+}
+
+/** Sorted slide numbers -> a `slides` value: [6,7,8,10] -> "6-8,10". */
+function toSpec(list: number[]): string {
+	const parts: string[] = [];
+	for (let i = 0; i < list.length; ) {
+		let j = i;
+		while (list[j + 1] === list[j] + 1) j++;
+		parts.push(j > i ? `${list[i]}-${list[j]}` : `${list[i]}`);
+		i = j + 1;
+	}
+	return parts.join(",");
 }
 
 /** The slide that holds the final content: figmaIds is `[enterSlideId?, slideId]`. */
@@ -140,7 +156,7 @@ export function registerDeckImportTools(
 
 	server.tool(
 		"deck_import",
-		`Import slides of a deck into the open Figma Slides file as native layers (text stays text; only bitmap images and looping regions become images). Per slide: capture the HTML in headless Chrome, build the layers, screenshot both sides into <work dir>/decks/<deck name>/shots, and run QA. Returns per slide { n, status passed|imported, figmaIds, issues (max ${MAX_ISSUES}), flags }. With slides omitted it does every slide not yet passed or flagged (resumable); force re-does all; slides ("7" or "1-10", 1-based) always re-does the named slides, replacing their earlier import. ${LOOP}`,
+		`Import slides of a deck into the open Figma Slides file as native layers (text stays text; only bitmap images and looping regions become images). Per slide: capture the HTML in headless Chrome, build the layers, screenshot both sides into <work dir>/decks/<deck name>/shots, and run QA. Returns per slide { n, status passed|imported, figmaIds, issues (max ${MAX_ISSUES}), flags }. With slides omitted it does the slides not yet passed or flagged (resumable), force re-does all, slides ("7" or "1-10", 1-based) always re-does the named slides, replacing their earlier import. At most limit slides (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}) are processed per call, so a long deck takes several calls: the response has remaining (slides still to do) and next (a slides value for them). deck_mark finished slides passed or flagged, because slides that are still only imported are redone first by the next default call. Flags are listed up to ${MAX_FLAGS} per slide, then flagsMore. warnings notes a slide count that differs from the deck source. ${LOOP}`,
 		{
 			zipPath,
 			deck,
@@ -154,31 +170,47 @@ export function registerDeckImportTools(
 				.boolean()
 				.optional()
 				.describe("Re-import every slide, including passed ones"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(MAX_LIMIT)
+				.optional()
+				.describe(
+					`Most slides to process in this call (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+				),
 		},
-		async ({ zipPath, deck: deckFile, slides, force }) => {
+		async ({ zipPath, deck: deckFile, slides, force, limit }) => {
 			let hint = ZIP_HINT;
 			let session: DeckSession | undefined;
 			let current: number | undefined;
 			const results: object[] = [];
 			try {
-				const { srcDir, total, workDir, deckDir } = await openDeck(
-					zipPath,
-					deckFile,
-				);
+				const {
+					srcDir,
+					total: listed,
+					workDir,
+					deckDir,
+				} = await openDeck(zipPath, deckFile);
 				const state = loadState(deckDir, zipPath, deckFile);
+				let total = listed;
 				// Every slide is known from the start, so the report's flagged % uses the deck size.
-				for (let n = 1; n <= total; n++) state.slides[n] ??= blank();
-				const todo = slides
-					? parseSlides(slides, total)
-					: force
-						? Array.from({ length: total }, (_, i) => i + 1)
-						: pendingSlides(state, total);
+				const plan = () => {
+					for (let n = 1; n <= total; n++) state.slides[n] ??= blank();
+					return slides
+						? parseSlides(slides, total)
+						: force
+							? Array.from({ length: total }, (_, i) => i + 1)
+							: pendingSlides(state, total);
+				};
+				let todo = plan();
 				saveState(deckDir, state);
 				if (!todo.length)
 					return ok({
 						workDir,
 						deckDir,
 						slides: [],
+						remaining: 0,
 						note: "Every slide is already passed or flagged. Use slides or force to redo some.",
 					});
 
@@ -188,7 +220,26 @@ export function registerDeckImportTools(
 				session = await DeckSession.open(srcDir, deckFile);
 				hint = BRIDGE_HINT;
 
-				for (const n of todo) {
+				// The source scan can miscount (slides that are not top-level <section>s); the rendered deck wins.
+				const warnings: string[] = [];
+				const rendered = session.slideCount();
+				if (rendered !== total) {
+					warnings.push(
+						`The deck renders ${rendered} slides but its source suggests ${total}; using ${rendered}.`,
+					);
+					total = rendered;
+					for (const k of Object.keys(state.slides)) {
+						const n = Number(k);
+						if (n > total && !state.slides[n].figmaIds.length)
+							delete state.slides[n];
+					}
+					todo = plan();
+					saveState(deckDir, state);
+				}
+				const batch = todo.slice(0, limit ?? DEFAULT_LIMIT);
+				const rest = todo.slice(batch.length);
+
+				for (const n of batch) {
 					current = n;
 					const entry = state.slides[n];
 					const out = await importSlide(
@@ -217,16 +268,25 @@ export function registerDeckImportTools(
 						...out.flags,
 					]);
 					saveState(deckDir, state);
+					const flagList = capped(entry.flags, MAX_FLAGS);
 					results.push({
 						n,
 						status: entry.status,
 						figmaIds: entry.figmaIds,
 						issueCount: out.qa.issues.length,
 						issues: out.qa.issues.slice(0, MAX_ISSUES),
-						flags: entry.flags,
+						flags: flagList.items,
+						flagsMore: flagList.more,
 					});
 				}
-				return ok({ workDir, deckDir, slides: results });
+				return ok({
+					workDir,
+					deckDir,
+					slides: results,
+					remaining: rest.length,
+					next: rest.length ? toSpec(rest) : undefined,
+					warnings: warnings.length ? warnings : undefined,
+				});
 			} catch (error) {
 				logger.error({ error }, "deck_import failed");
 				return fail(error, hint, {
@@ -350,19 +410,37 @@ export function registerDeckImportTools(
 
 				hint = BRIDGE_HINT;
 				const figma = new FigmaDeck(await getDesktopConnector());
-				const { dump, qa: before } = await recheck(
-					figma,
-					deckDir,
-					slide,
-					slideId,
-				);
+				const {
+					built,
+					dump,
+					qa: before,
+				} = await recheck(figma, deckDir, slide, slideId);
 				const target = findByImportId(dump, importId);
 				if (!target)
 					return fail(
 						`No node with importId ${importId} in slide ${slide}`,
 						"Use ids from deck_slide_view's nodes list. A dropped node (image-unsupported, missing-icon) has none.",
 					);
-				const { warnings } = await figma.patch(target.id, props);
+				const warnings = [...(await figma.patch(target.id, props)).warnings];
+				// The start-state copy still shows the slide as it was imported, so Smart Animate would jump:
+				// rebuild it from the stored entrance. The new id is saved at once; the old copy is gone.
+				if (entry.figmaIds.length === 2 && built.ir.entrance) {
+					try {
+						entry.figmaIds = [
+							await figma.rebuildEntrance(
+								slideId,
+								built.ir.entrance,
+								entry.figmaIds[0],
+							),
+							slideId,
+						];
+						saveState(deckDir, state);
+					} catch (e) {
+						warnings.push(
+							`entrance-failed: ${e instanceof Error ? e.message : String(e)}`,
+						);
+					}
+				}
 				const { qa } = await recheck(figma, deckDir, slide, slideId);
 
 				entry.rounds += 1;

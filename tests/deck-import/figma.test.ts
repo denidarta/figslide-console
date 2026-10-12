@@ -177,6 +177,38 @@ describe("FigmaDeck", () => {
 		expect(sb.fake.gridIds()[0]).toHaveLength(2);
 	});
 
+	it("rebuildEntrance makes a fresh copy of the patched slide and removes the stale one", async () => {
+		const sb = new Sandbox();
+		sb.fake.addSlide("Blank");
+		const deck = new FigmaDeck(connectorFor(sb));
+		const entrance = {
+			durationS: 0.5,
+			curve: "EASE_OUT" as const,
+			start: { "s0-n1": { opacity: 0 } },
+		};
+		const first = await deck.buildSlide(
+			slide({ entrance }),
+			new Map([["logo.png", "H"]]),
+		);
+		const built = sb.fake.nodes.get(first.slideId) as FNode;
+		built.children[0].x = 55; // a patch after the copy was made
+
+		const fresh = await deck.rebuildEntrance(
+			first.slideId,
+			entrance,
+			first.enterSlideId,
+		);
+		expect(fresh).not.toBe(first.enterSlideId);
+		expect(sb.fake.nodes.get(first.enterSlideId as string)?.removed).toBe(true);
+		const copy = sb.fake.nodes.get(fresh) as FNode;
+		expect(copy.name).toBe("Title · enter");
+		expect(copy.children[0].x).toBe(55);
+		expect(copy.children[0].opacity).toBe(0);
+		expect(
+			sb.fake.pageSlides.filter((s) => !s.removed && s.name.endsWith("enter")),
+		).toHaveLength(1);
+	});
+
 	it("passes replaceIds through", async () => {
 		const sb = new Sandbox();
 		const a = sb.fake.addSlide("A");

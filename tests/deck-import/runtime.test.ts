@@ -686,6 +686,67 @@ describe("runtime makeEntrance", () => {
 		expect(original?.transition).toEqual(transition);
 	});
 
+	it("replaceId swaps in a fresh copy of the current slide and removes the stale one", async () => {
+		const { sb, slideId } = await built();
+		const first = (await sb.run({
+			cmd: "makeEntrance",
+			slideId,
+			start: { "s0-n3": { opacity: 0 } },
+			transition: { duration: 0.5, curve: "EASE_OUT" },
+		})) as { enterSlideId: string };
+		// the slide changed after the copy was made
+		const text = sb.fake.nodes.get(slideId)?.children[0].children[0];
+		if (text) text.x = 77;
+
+		const second = (await sb.run({
+			cmd: "makeEntrance",
+			slideId,
+			start: { "s0-n3": { opacity: 0 } },
+			transition: { duration: 0.4, curve: "LINEAR" },
+			replaceId: first.enterSlideId,
+		})) as { enterSlideId: string };
+
+		expect(second.enterSlideId).not.toBe(first.enterSlideId);
+		expect(sb.fake.nodes.get(first.enterSlideId)?.removed).toBe(true);
+		expect(sb.fake.gridIds()[0].slice(-2)).toEqual([second.enterSlideId, slideId]);
+		const copyText = sb.fake.nodes
+			.get(second.enterSlideId)
+			?.findAll((n) => n.getPluginData("importId") === "s0-n3")[0];
+		expect(copyText?.x).toBe(77); // cloned from the patched slide
+		expect(sb.fake.nodes.get(slideId)?.transition).toMatchObject({
+			duration: 0.4,
+			curve: "LINEAR",
+		});
+	});
+
+	it("replaceId keeps the old copy when the new one fails", async () => {
+		const { sb, slideId } = await built();
+		const first = (await sb.run({
+			cmd: "makeEntrance",
+			slideId,
+			start: {},
+			transition: { duration: 0.5, curve: "EASE_OUT" },
+		})) as { enterSlideId: string };
+		const before = sb.fake.gridIds();
+		sb.fake.onClone = (c) => {
+			if (c.type === "SLIDE")
+				c.setSlideTransition = () => {
+					throw new Error("transitions unavailable");
+				};
+		};
+		await expect(
+			sb.run({
+				cmd: "makeEntrance",
+				slideId,
+				start: {},
+				transition: { duration: 0.5, curve: "EASE_OUT" },
+				replaceId: first.enterSlideId,
+			}),
+		).rejects.toThrow("transitions unavailable");
+		expect(sb.fake.nodes.get(first.enterSlideId)?.removed).toBe(false);
+		expect(sb.fake.gridIds()).toEqual(before);
+	});
+
 	it("never sets a duration below 0.01", async () => {
 		const { sb, slideId } = await built();
 		await sb.run({

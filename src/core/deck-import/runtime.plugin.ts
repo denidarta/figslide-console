@@ -425,6 +425,9 @@ async function __deckMakeEntrance(cmd) {
 			curve: cmd.transition.curve,
 			timing: { type: "AFTER_DELAY", delay: 0 },
 		});
+		// A stale copy (the slide was patched since) goes only once its replacement is complete.
+		var stale = cmd.replaceId ? await figma.getNodeByIdAsync(cmd.replaceId) : null;
+		if (stale && stale.id !== copy.id) stale.remove();
 	} catch (e) {
 		// All or nothing: a half-built start copy would play as a stray extra slide.
 		copy.remove();

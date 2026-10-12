@@ -8,6 +8,7 @@ import { registerDeckImportTools } from "../../src/core/deck-import/tools.js";
 import type {
 	FigmaDumpNode,
 	ImportState,
+	RawAnim,
 	RawNode,
 } from "../../src/core/deck-import/types.js";
 import { deckDirFor, workDirFor } from "../../src/core/deck-import/zip.js";
@@ -82,6 +83,7 @@ describe("deck-import tools", () => {
 	let deck: any;
 	let getConnector: jest.Mock;
 	let captureNodes: (i: number) => RawNode[];
+	let captureAnims: RawAnim[];
 	let dumpChildren: () => FigmaDumpNode[];
 
 	const call = (name: string, args: object) => server.tools[name].handler(args);
@@ -107,6 +109,7 @@ describe("deck-import tools", () => {
 		workDir = workDirFor(zipPath);
 		deckDir = deckDirFor(zipPath, DECK);
 		captureNodes = (i) => rootOnly(i);
+		captureAnims = [];
 		dumpChildren = () => [];
 
 		session = {
@@ -118,7 +121,7 @@ describe("deck-import tools", () => {
 			})),
 			capture: jest.fn(async (i: number) => ({
 				nodes: captureNodes(i),
-				anims: [],
+				anims: captureAnims,
 			})),
 			screenshot: jest.fn(async (_i: number, out: string) => {
 				fs.writeFileSync(out, PNG);
@@ -138,6 +141,7 @@ describe("deck-import tools", () => {
 				fs.writeFileSync(out, PNG);
 			}),
 			patch: jest.fn(async () => ({ warnings: [] })),
+			rebuildEntrance: jest.fn(async () => "9:50"),
 		};
 		(DeckSession.open as jest.Mock).mockReset().mockResolvedValue(session);
 		(FigmaDeck as unknown as jest.Mock)
@@ -336,12 +340,123 @@ describe("deck-import tools", () => {
 		});
 	});
 
+	describe("deck_import batching", () => {
+		const decksOf = (count: number) =>
+			(listDecks as jest.Mock).mockResolvedValue([
+				{ file: DECK, slideCount: count },
+			]);
+
+		it("processes at most 8 slides per call by default and says what is left", async () => {
+			decksOf(10);
+			session.slideCount = () => 10;
+			const out = json(await call("deck_import", { zipPath, deck: DECK }));
+			expect(out.slides.map((s: any) => s.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+			expect(out.remaining).toBe(2);
+			expect(out.next).toBe("9-10");
+			expect(session.capture).toHaveBeenCalledTimes(8);
+			expect(readState().slides[10].status).toBe("pending"); // seeded, not yet done
+
+			// the next default call picks up where the passed slides end
+			session.capture.mockClear();
+			const rest = json(await call("deck_import", { zipPath, deck: DECK }));
+			expect(rest.slides.map((s: any) => s.n)).toEqual([9, 10]);
+			expect(rest.remaining).toBe(0);
+			expect(rest.next).toBeUndefined();
+		});
+
+		it("honours limit, and the next value works as slides", async () => {
+			decksOf(10);
+			session.slideCount = () => 10;
+			const out = json(
+				await call("deck_import", {
+					zipPath,
+					deck: DECK,
+					slides: "1,4-9",
+					limit: 3,
+				}),
+			);
+			expect(out.slides.map((s: any) => s.n)).toEqual([1, 4, 5]);
+			expect(out.remaining).toBe(4);
+			expect(out.next).toBe("6-9");
+		});
+
+		it("limit is an integer from 1 to 20 and the description says so", () => {
+			const shape = z.object(server.tools.deck_import.schema);
+			const valid = (limit: number) =>
+				shape.safeParse({ zipPath, deck: DECK, limit }).success;
+			expect(valid(1)).toBe(true);
+			expect(valid(20)).toBe(true);
+			expect(valid(0)).toBe(false);
+			expect(valid(21)).toBe(false);
+			expect(valid(2.5)).toBe(false);
+			expect(server.tools.deck_import.description).toMatch(/limit/);
+			expect(server.tools.deck_import.description).toMatch(/remaining/);
+		});
+
+		it("caps each slide's flags at 20 with a +N more marker, keeping all of them in state", async () => {
+			captureNodes = (i) => [
+				...rootOnly(i),
+				...Array.from({ length: 25 }, (_, k) => ({
+					id: `s${i}-n${k + 1}`,
+					parentId: `s${i}-n0`,
+					tag: "img",
+					box: { x: k, y: 0, w: 5, h: 5 },
+					style: {},
+					img: {
+						src: `nope${k}.png`,
+						naturalW: 1,
+						naturalH: 1,
+						objectFit: "cover",
+					},
+				})),
+			];
+			const out = json(
+				await call("deck_import", { zipPath, deck: DECK, slides: "1" }),
+			);
+			expect(out.slides[0].flags).toHaveLength(20);
+			expect(out.slides[0].flagsMore).toBe("+5 more");
+			expect(readState().slides[1].flags).toHaveLength(25);
+		});
+	});
+
+	describe("deck_import slide count", () => {
+		it("uses the rendered count and warns when the source count differs (more slides)", async () => {
+			session.slideCount = () => 5; // listDecks says 3
+			const out = json(await call("deck_import", { zipPath, deck: DECK }));
+			expect(out.slides.map((s: any) => s.n)).toEqual([1, 2, 3, 4, 5]);
+			expect(out.warnings).toHaveLength(1);
+			expect(out.warnings[0]).toMatch(/5/);
+			expect(out.warnings[0]).toMatch(/3/);
+			expect(Object.keys(readState().slides)).toEqual(["1", "2", "3", "4", "5"]);
+		});
+
+		it("drops never-imported entries beyond a smaller rendered count, keeps imported ones", async () => {
+			writeState({
+				3: slideState("imported", ["5:3"]),
+				2: slideState("pending"),
+			});
+			session.slideCount = () => 1;
+			const out = json(await call("deck_import", { zipPath, deck: DECK }));
+			expect(out.slides.map((s: any) => s.n)).toEqual([1]);
+			expect(out.warnings).toHaveLength(1);
+			const st = readState();
+			expect(Object.keys(st.slides)).toEqual(["1", "3"]);
+			expect(st.slides[3].figmaIds).toEqual(["5:3"]);
+		});
+
+		it("adds no warning when the counts agree", async () => {
+			const out = json(await call("deck_import", { zipPath, deck: DECK }));
+			expect(out.warnings).toBeUndefined();
+		});
+	});
+
 	describe("per-deck state", () => {
 		it("keeps each deck's artifacts under decks/<name> and leaves another deck's state intact", async () => {
 			(listDecks as jest.Mock).mockResolvedValue([
 				{ file: DECK, slideCount: 3 },
 				{ file: "Other.dc.html", slideCount: 2 },
 			]);
+			session.slideCount = () => 2; // the page renders the deck being opened
 			writeState({ 1: slideState("passed", ["5:1"]) });
 			const before = fs.readFileSync(stateFile(), "utf8");
 
@@ -587,6 +702,76 @@ describe("deck-import tools", () => {
 			expect(s.status).toBe("passed");
 			expect(s.rounds).toBe(2);
 			expect(s.flags).toContain("fixed:box");
+		});
+
+		describe("slides with an entrance pair", () => {
+			const enterAnim: RawAnim = {
+				nodeId: "s0-n1",
+				name: "a",
+				iterations: 1,
+				delayMs: 0,
+				durationMs: 600,
+				easing: "ease-out",
+				firstKeyframe: { opacity: "0" },
+			};
+			const patchArgs = () => ({
+				zipPath,
+				deck: DECK,
+				slide: 1,
+				importId: "s0-n1",
+				props: { x: 10 },
+			});
+			beforeEach(() => {
+				captureAnims = [enterAnim];
+				deck.buildSlide.mockImplementation(
+					async (slide: { index: number }) => ({
+						slideId: `9:${slide.index + 1}`,
+						enterSlideId: `8:${slide.index + 1}`,
+						warnings: [],
+					}),
+				);
+			});
+
+			it("deck_patch rebuilds the start copy from the stored entrance and persists the new id", async () => {
+				await call("deck_import", { zipPath, deck: DECK, slides: "1" });
+				expect(readState().slides[1].figmaIds).toEqual(["8:1", "9:1"]);
+
+				const out = json(await call("deck_patch", patchArgs()));
+				expect(out.warnings).toEqual([]);
+				expect(deck.rebuildEntrance).toHaveBeenCalledTimes(1);
+				const [slideId, entrance, oldEnter] = deck.rebuildEntrance.mock.calls[0];
+				expect(slideId).toBe("9:1");
+				expect(oldEnter).toBe("8:1");
+				expect(entrance).toMatchObject({
+					durationS: 0.6,
+					curve: "EASE_OUT",
+					start: { "s0-n1": { opacity: 0 } },
+				});
+				expect(readState().slides[1].figmaIds).toEqual(["9:50", "9:1"]);
+				// a later patch replaces the new copy, not the original one
+				await call("deck_patch", patchArgs());
+				expect(deck.rebuildEntrance.mock.calls[1][2]).toBe("9:50");
+			});
+
+			it("a failed rebuild is a warning flag; the old ids stay", async () => {
+				await call("deck_import", { zipPath, deck: DECK, slides: "1" });
+				deck.rebuildEntrance.mockRejectedValue(new Error("clone failed"));
+				const res = await call("deck_patch", patchArgs());
+				expect(res.isError).toBeUndefined();
+				expect(json(res).warnings).toEqual([
+					expect.stringMatching(/^entrance-failed: clone failed/),
+				]);
+				const s = readState().slides[1];
+				expect(s.figmaIds).toEqual(["8:1", "9:1"]);
+				expect(s.flags.some((f) => f.startsWith("entrance-failed"))).toBe(true);
+			});
+
+			it("a slide without a copy is not rebuilt", async () => {
+				captureAnims = [];
+				await call("deck_import", { zipPath, deck: DECK, slides: "1" });
+				await call("deck_patch", patchArgs());
+				expect(deck.rebuildEntrance).not.toHaveBeenCalled();
+			});
 		});
 
 		it("deck_patch reports an unknown importId", async () => {
