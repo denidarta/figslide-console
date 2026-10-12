@@ -69,6 +69,7 @@ import {
 } from "./apps/design-system-dashboard/server.js";
 import { registerFigJamTools } from "./core/figjam-tools.js";
 import { registerSlidesTools } from "./core/slides-tools.js";
+import { registerDeckImportTools } from "./core/deck-import/tools.js";
 import { registerSlotTools } from "./core/slot-tools.js";
 
 const logger = createChildLogger({ component: "local-server" });
@@ -3245,6 +3246,12 @@ Without libraryFileKey/libraryFileUrl, searches the currently open file (local c
 
 		// Register Figma Slides tools (slide management, transitions, content)
 		registerSlidesTools(
+			this.server,
+			() => this.getDesktopConnector(),
+		);
+
+		// Deck import: Claude design-artifact HTML zip -> native Figma Slides layers (local only)
+		registerDeckImportTools(
 			this.server,
 			() => this.getDesktopConnector(),
 		);

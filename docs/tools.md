@@ -140,6 +140,23 @@ Slides tools are documented in the [Slides guide](/slides). MCP Apps (`figma_bro
 
 ---
 
+## 📥 Deck Import Tools (HTML deck to Figma Slides)
+
+Local Mode only. These tools import a Claude design-artifact `.zip` (a `*.dc.html` deck) into the open Figma Slides file as native layers: text stays text, shapes stay shapes, and only bitmap images and looping regions become images. They need the Desktop Bridge plugin running in a Slides file, Google Chrome (or `DECK_IMPORT_CHROME_PATH` pointing at a Chrome executable), and network access (web images, Google Fonts). Slide numbers are 1-based. Files go to `<zip dir>/<zip name>.import/` (`src/`, `shots/`, `ir/`, `state.json`, `report.html`).
+
+| Tool | Purpose |
+|------|---------|
+| `deck_list` | List the decks in the zip with their slide counts |
+| `deck_import` | Import slides (default: every slide not yet passed or flagged; `slides: "7"` or `"1-10"` re-imports and replaces; `force` redoes all), screenshot both sides, run QA |
+| `deck_slide_view` | Return the HTML and Figma screenshots as images, plus the current QA result and an id/kind/box list of every import node |
+| `deck_patch` | Fix one node by `importId` with Figma-API-form props, re-check, and update the slide's state |
+| `deck_mark` | Record your visual verdict: `passed`, or `flagged` with a reason |
+| `deck_report` | Write `report.html` and return its path with the passed / flagged counts |
+
+The loop each slide goes through: `deck_import` -> `deck_slide_view` -> `deck_patch` (or re-import) for at most 3 rounds -> `deck_mark` -> `deck_report`. Compare the two screenshots yourself, since QA only checks numbers (box position and size within 2px, text line count, fonts, empty or pass-through frames). Rasterizing is never an allowed fix: do not replace text, shapes or icons with images. The import is accepted when at most 10% of slides end up flagged.
+
+---
+
 ## 🧭 Navigation & Status Tools
 
 ### `figma_navigate`
