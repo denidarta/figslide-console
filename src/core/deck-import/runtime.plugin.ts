@@ -173,7 +173,9 @@ async function __deckApplyText(node, p, loadFont) {
 	var fonts = [];
 	for (var i = 0; i < runs.length; i++)
 		fonts.push(await loadFont({ family: runs[i].family, style: runs[i].style }));
-	node.fontName = fonts.length ? fonts[0] : await loadFont({ family: "Inter", style: "Regular" });
+	// Without runs the node keeps the fonts it has (loaded above); only an empty fresh node needs its default font.
+	if (fonts.length) node.fontName = fonts[0];
+	else if (!node.characters.length) node.fontName = await loadFont({ family: "Inter", style: "Regular" });
 	node.characters = p.text !== undefined ? p.text : node.characters;
 	for (var k = 0; k < runs.length; k++) {
 		var r = runs[k];
@@ -229,11 +231,18 @@ async function __deckApply(node, p, loadFont) {
 	if (p.effects !== undefined) node.effects = p.effects;
 	if (p.clip !== undefined) node.clipsContent = p.clip;
 	if (p.opacity !== undefined) node.opacity = p.opacity;
+	var shift = 0;
 	if (node.type === "TEXT") {
 		if (p.w !== undefined) {
-			// resize() switches a text node to fixed size, so set auto-height afterwards.
+			// resize() switches a text node to fixed size, so set auto-size afterwards. Single-line text
+			// (autoWidth) is sized by Figma itself and cannot wrap; its box keeps the left edge, so move
+			// it to leave the aligned edge or centre where the (slackened) box had it.
 			node.resize(Math.max(p.w, 0.01), node.height);
-			node.textAutoResize = "HEIGHT";
+			if (p.autoWidth) {
+				node.textAutoResize = "WIDTH_AND_HEIGHT";
+				var narrower = Math.max(p.w, 0.01) - node.width;
+				shift = node.textAlignHorizontal === "CENTER" ? narrower / 2 : node.textAlignHorizontal === "RIGHT" ? narrower : 0;
+			} else node.textAutoResize = "HEIGHT";
 		}
 	} else if (p.w !== undefined || p.h !== undefined) {
 		node.resize(
@@ -241,7 +250,7 @@ async function __deckApply(node, p, loadFont) {
 			Math.max(p.h !== undefined ? p.h : node.height, 0.01)
 		);
 	}
-	if (p.x !== undefined) node.x = p.x;
+	if (p.x !== undefined) node.x = p.x + shift;
 	if (p.y !== undefined) node.y = p.y;
 }
 

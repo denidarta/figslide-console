@@ -6,7 +6,8 @@ import { SLIDE_SIZE, buildOps, figmaPaints } from "./ops.js";
 import { RUNTIME_SOURCE } from "./runtime.plugin.js";
 import type { FigmaDumpNode, SlideIR } from "./types.js";
 
-const TIMEOUT_MS = 60_000;
+// A slide with icons, images and a few hundred layers can take well over a minute to build.
+const TIMEOUT_MS = 180_000;
 
 /** The plugin's EXECUTE_CODE wraps failures as "Error: message". */
 const clean = (m: string) => m.replace(/^\w*Error: /, "");

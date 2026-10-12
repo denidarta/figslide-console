@@ -90,7 +90,7 @@ describe("buildOps", () => {
 		);
 		expect(ops[0].props).toMatchObject({ x: 100, y: 200, w: 500, h: 300 });
 		expect(ops[1].props).toMatchObject({ x: 20, y: 30, w: 200, h: 48 });
-		expect(ops[2].props).toMatchObject({ x: 5, y: 2, w: 50, h: 20 });
+		expect(ops[2].props).toMatchObject({ x: 4, y: 2, w: 52, h: 20 }); // centred text: 2px slack
 	});
 
 	it("ends every op name with ' #<id>'", () => {
@@ -300,9 +300,9 @@ describe("buildOps", () => {
 			new Map(),
 		);
 		expect(op.props).toMatchObject({
-			x: 10,
+			x: 9, // centred text: 2px width slack, shifted by 1
 			y: 20,
-			w: 300,
+			w: 302,
 			h: 60,
 			text: "Hello world",
 			align: "CENTER",
@@ -349,6 +349,37 @@ describe("buildOps", () => {
 		expect(fillsOf("not-a-colour")).toEqual([
 			{ type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity: 1 },
 		]);
+	});
+
+	it("gives text 2px of width slack, shifted by alignment, so Figma never wraps the last word", () => {
+		const geo = (align: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED") => {
+			const [op] = buildOps(
+				slide([
+					{ ...text("t", box(100, 20, 300, 60)), align } as NodeIR,
+				]),
+				new Map(),
+			);
+			return { x: op.props.x, w: op.props.w, y: op.props.y, h: op.props.h };
+		};
+		expect(geo("LEFT")).toEqual({ x: 100, w: 302, y: 20, h: 60 });
+		expect(geo("CENTER")).toEqual({ x: 99, w: 302, y: 20, h: 60 });
+		expect(geo("RIGHT")).toEqual({ x: 98, w: 302, y: 20, h: 60 });
+		expect(geo("JUSTIFIED")).toEqual({ x: 100, w: 302, y: 20, h: 60 });
+	});
+
+	it("applies the slack relative to the parent and marks only single-line text as auto-width", () => {
+		const multi = { ...text("m", box(130, 40, 100, 96)), lineCount: 2 } as NodeIR;
+		const ops = buildOps(
+			slide([
+				frame("f", box(100, 0, 500, 300), [text("one", box(120, 10, 50, 48)), multi]),
+			]),
+			new Map(),
+		);
+		const one = ops.find((o) => o.id === "one");
+		const two = ops.find((o) => o.id === "m");
+		expect(one?.props).toMatchObject({ x: 19, w: 52, autoWidth: true });
+		expect(two?.props).toMatchObject({ x: 29, w: 102 });
+		expect(two?.props.autoWidth).toBeFalsy();
 	});
 
 	it("names text after its content", () => {

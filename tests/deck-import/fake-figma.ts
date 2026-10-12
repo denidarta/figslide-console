@@ -24,6 +24,7 @@ export class FNode {
 	ranges: { fn: string; args: unknown[] }[] = [];
 	transition: unknown = null;
 	characters = "";
+	private autoResize: string | undefined;
 
 	constructor(
 		readonly type: string,
@@ -32,6 +33,16 @@ export class FNode {
 		this.id = `${++owner.seq}:${owner.seq}`;
 		owner.nodes.set(this.id, this);
 		if (type === "SLIDE") owner.pageSlides.push(this);
+	}
+
+	/** Like Figma, WIDTH_AND_HEIGHT re-measures the width (the fake asks owner.autoWidthOf). */
+	get textAutoResize() {
+		return this.autoResize;
+	}
+	set textAutoResize(v: string | undefined) {
+		this.autoResize = v;
+		if (v === "WIDTH_AND_HEIGHT" && this.owner.autoWidthOf)
+			this.width = this.owner.autoWidthOf(this);
 	}
 
 	appendChild(c: FNode) {
@@ -161,6 +172,8 @@ export class FakeFigma {
 			"Bold Italic",
 		].map((style) => ({ family: "Inter", style })),
 	];
+	/** Natural width of a text node set to WIDTH_AND_HEIGHT; unset = width unchanged. */
+	autoWidthOf?: (text: FNode) => number;
 	/** Called with every cloned node, to inject failures. */
 	onClone?: (clone: FNode) => void;
 	readonly mixed = Symbol("mixed");

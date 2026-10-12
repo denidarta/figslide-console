@@ -72,7 +72,7 @@ const slide = (extra: Partial<SlideIR> = {}): SlideIR => ({
 });
 
 describe("FigmaDeck", () => {
-	it("sends the runtime plus one command per call with a 60s timeout", async () => {
+	it("sends the runtime plus one command per call with a 180s timeout", async () => {
 		const sb = new Sandbox();
 		sb.fake.addSlide("Blank");
 		const conn = connectorFor(sb);
@@ -83,7 +83,7 @@ describe("FigmaDeck", () => {
 		);
 		expect(enterSlideId).toBeUndefined();
 		expect(conn.calls).toHaveLength(1);
-		expect(conn.calls[0].timeout).toBe(60000);
+		expect(conn.calls[0].timeout).toBe(180000);
 		expect(conn.calls[0].code.startsWith(RUNTIME_SOURCE)).toBe(true);
 		expect(conn.calls[0].code).toContain("return await __deckImport({");
 

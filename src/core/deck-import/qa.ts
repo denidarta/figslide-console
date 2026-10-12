@@ -1,4 +1,4 @@
-import { firstFamily } from "./ops.js";
+import { firstFamily, TEXT_SLACK } from "./ops.js";
 import type {
 	Box,
 	FigmaDumpNode,
@@ -25,11 +25,16 @@ const edges = (b: Box) => [b.x, b.y, b.x + b.w, b.y + b.h];
 const fmt = (b: Box) =>
 	`${[b.x, b.y, b.w, b.h].map((v) => Math.round(v * 10) / 10).join(",")}`;
 
-/** Largest edge difference; a vector is fitted into its box, so it only has to be centred with one axis filled. */
-function boxOff(ir: Box, d: Box, fitted: boolean): number {
+/**
+ * Largest edge difference, less `slackX` on the left and right edges (text boxes are widened on purpose,
+ * see ops TEXT_SLACK); a vector is fitted into its box, so it only has to be centred with one axis filled.
+ */
+function boxOff(ir: Box, d: Box, fitted: boolean, slackX: number): number {
 	if (!fitted) {
 		const [a, b] = [edges(ir), edges(d)];
-		return Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+		return Math.max(
+			...a.map((v, i) => Math.abs(v - b[i]) - (i % 2 === 0 ? slackX : 0)),
+		);
 	}
 	const centre = Math.max(
 		Math.abs(d.x + d.w / 2 - (ir.x + ir.w / 2)),
@@ -100,7 +105,8 @@ export function checkSlide(
 		)
 			add("raster", `${n.kind} node has an image fill`);
 
-		if (boxOff(n.box, d.box, n.kind === "vector") > TOL)
+		const slackX = n.kind === "text" ? TEXT_SLACK : 0;
+		if (boxOff(n.box, d.box, n.kind === "vector", slackX) > TOL)
 			add("box", `expected ${fmt(n.box)} got ${fmt(d.box)} (x,y,w,h)`);
 
 		if (n.kind === "text" && d.text) {

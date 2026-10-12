@@ -273,8 +273,9 @@ describe("checkSlide", () => {
 	});
 
 	it("box: 1px and 2px offsets pass, 3px fails; position and size are both checked", () => {
-		const ir = slide([text("t", box(100, 100, 200, 48))]);
-		const at = (b: Box) => checkSlide(ir, root(dtext("t", b)));
+		const ir = slide([image("t", box(100, 100, 200, 48))]);
+		const at = (b: Box) =>
+			checkSlide(ir, root(dn("t", "RECTANGLE", b, { fills: [IMG] })));
 		expect(at(box(101, 100, 200, 48)).pass).toBe(true);
 		expect(at(box(102, 102, 200, 48)).pass).toBe(true);
 		expect(at(box(100, 100, 201, 49)).pass).toBe(true);
@@ -283,6 +284,20 @@ describe("checkSlide", () => {
 		expect(moved.pass).toBe(false);
 		expect(kinds(at(box(100, 100, 203, 48)).issues)).toEqual(["box"]);
 		expect(kinds(at(box(100, 100, 200, 52)).issues)).toEqual(["box"]);
+	});
+
+	it("box: text edges may be off by the 2px width slack on top of the tolerance, horizontally only", () => {
+		const ir = slide([text("t", box(100, 100, 200, 48))]);
+		const at = (b: Box) => checkSlide(ir, root(dtext("t", b)));
+		// ops widen the box by 2 and shift x by the alignment; Figma may then measure a little off
+		expect(at(box(98, 100, 204, 48)).pass).toBe(true); // both edges 2 + 2 away
+		expect(at(box(96, 100, 204, 48)).pass).toBe(true); // left edge 4 away
+		expect(kinds(at(box(95, 100, 205, 48)).issues)).toEqual(["box"]); // 5 away
+		expect(kinds(at(box(100, 100, 205, 48)).issues)).toEqual(["box"]); // right edge 5 away
+		// vertical edges keep the plain tolerance
+		expect(at(box(100, 102, 200, 48)).pass).toBe(true);
+		expect(kinds(at(box(100, 103, 200, 48)).issues)).toEqual(["box"]);
+		expect(kinds(at(box(100, 100, 200, 51)).issues)).toEqual(["box"]);
 	});
 
 	it("box: text uses line-box geometry (lines x line-height), not the content area", () => {

@@ -267,6 +267,33 @@ describe("runtime buildSlide", () => {
 		});
 	});
 
+	it("sizes single-line text to its content and keeps the aligned edge where ops put it", async () => {
+		const at = async (align: string, autoWidth?: boolean) => {
+			const { sb } = deckWithOneSlide();
+			sb.fake.autoWidthOf = () => 300; // Figma measures 2px narrower than the slackened box
+			const res = (await sb.run({
+				cmd: "buildSlide",
+				slide: slideMeta(),
+				ops: [textOp("t", null, { x: 100, w: 302, align, autoWidth })],
+			})) as { slideId: string };
+			return sb.fake.nodes.get(res.slideId)?.children[0];
+		};
+		const left = await at("LEFT", true);
+		expect(left).toMatchObject({
+			textAutoResize: "WIDTH_AND_HEIGHT",
+			width: 300,
+			x: 100,
+		});
+		expect(await at("CENTER", true)).toMatchObject({ width: 300, x: 101 });
+		expect(await at("RIGHT", true)).toMatchObject({ width: 300, x: 102 });
+		// wrapped text keeps a fixed width with auto height
+		expect(await at("RIGHT", false)).toMatchObject({
+			textAutoResize: "HEIGHT",
+			width: 302,
+			x: 100,
+		});
+	});
+
 	it("fits a vector's svg uniformly into its box", async () => {
 		const { sb } = deckWithOneSlide();
 		const res = (await sb.run({
@@ -866,6 +893,42 @@ describe("runtime patch", () => {
 			family: "Geist",
 			style: "Bold",
 		});
+	});
+
+	it("a text-only patch keeps the node's fonts and ranges instead of resetting to Inter", async () => {
+		const { sb } = deckWithOneSlide();
+		const res = (await sb.run({
+			cmd: "buildSlide",
+			slide: slideMeta(),
+			ops: [textOp("t", null)],
+		})) as { slideId: string };
+		const t = sb.fake.nodes.get(res.slideId)?.children[0];
+		const fontBefore = t?.fontName;
+		const rangesBefore = t?.rangeFonts.length;
+		expect(fontBefore).toEqual({ family: "Geist", style: "SemiBold" });
+
+		await sb.run({ cmd: "patch", nodeId: t?.id, props: { text: "Hi there" } });
+		expect(t?.characters).toBe("Hi there");
+		expect(t?.fontName).toEqual(fontBefore);
+		expect(t?.rangeFonts).toHaveLength(rangesBefore as number);
+		// the existing fonts are loaded so Figma accepts the new characters
+		expect(sb.fake.loadedFonts).toContainEqual({
+			family: "Geist",
+			style: "SemiBold",
+		});
+	});
+
+	it("a text patch on an empty node still gets a loaded default font", async () => {
+		const { sb } = deckWithOneSlide();
+		const res = (await sb.run({
+			cmd: "buildSlide",
+			slide: slideMeta(),
+			ops: [textOp("t", null, { text: "", runs: [] })],
+		})) as { slideId: string };
+		const t = sb.fake.nodes.get(res.slideId)?.children[0];
+		await sb.run({ cmd: "patch", nodeId: t?.id, props: { text: "Hello" } });
+		expect(t?.characters).toBe("Hello");
+		expect(t?.fontName).toEqual({ family: "Inter", style: "Regular" });
 	});
 
 	it("rejects an unknown node", async () => {

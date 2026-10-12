@@ -27,6 +27,14 @@ const solid = (c: RGBA): FigmaPaint => ({
 export const SLIDE_SIZE = { w: 1920, h: 1080 };
 
 /**
+ * Text boxes are measured to the widest line, to 1/64px; Figma's own measuring can come out a hair
+ * wider and wrap the last word. Ops widen every text box by this much (QA tolerates it) and shift x
+ * so the aligned edge stays put.
+ */
+export const TEXT_SLACK = 2;
+const SLACK_SHIFT = { LEFT: 0, JUSTIFIED: 0, CENTER: 0.5, RIGHT: 1 } as const;
+
+/**
  * Figma's gradientTransform maps node space (0..1) into gradient space where t = x'. Solve it so the
  * CSS gradient line (length |w sin| + |h cos|, through the centre, at `angleDeg` clockwise from "up")
  * runs t = 0 -> 1; the second row is the perpendicular so the handle stays orthonormal in pixels.
@@ -199,8 +207,12 @@ export function buildOps(slide: SlideIR, hashes: Map<string, string>): Op[] {
 					const label = t.text.replace(/\s+/g, " ").trim().slice(0, 40);
 					push("text", label || "Text", {
 						...t,
+						x: geo.x - TEXT_SLACK * SLACK_SHIFT[n.align],
+						w: geo.w + TEXT_SLACK,
 						align: n.align,
 						opacity: n.opacity,
+						// one line cannot wrap: let Figma size it, whatever its own measuring says
+						autoWidth: n.lineCount === 1,
 					});
 					break;
 				}
