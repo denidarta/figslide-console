@@ -45,22 +45,108 @@ function __deckUpload(cmd) {
 
 // ---- fonts ----------------------------------------------------------------------------------------
 
-// Loads {family, style}; falls back to the family's Regular, then Inter, and records the substitution.
+var __DECK_WEIGHTS = {
+	thin: 100,
+	hairline: 100,
+	extralight: 200,
+	ultralight: 200,
+	light: 300,
+	regular: 400,
+	normal: 400,
+	book: 400,
+	medium: 500,
+	semibold: 600,
+	demibold: 600,
+	bold: 700,
+	extrabold: 800,
+	ultrabold: 800,
+	black: 900,
+	heavy: 900,
+};
+
+// "Semi Bold", "semi-bold" and "SemiBold" are the same style; families spell them differently.
+function __deckStyleKey(style) {
+	return String(style).toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+// {weight, italic} of a style name, or null when it is not a plain weight name (e.g. "Condensed").
+function __deckStyleInfo(style) {
+	var key = __deckStyleKey(style);
+	var italic = /italic|oblique/.test(key);
+	key = key.replace(/italic|oblique/g, "");
+	var weight = key === "" ? 400 : __DECK_WEIGHTS[key];
+	return weight === undefined ? null : { weight: weight, italic: italic };
+}
+
+// The entry of styles that is the same style under another spelling, else the nearest weight
+// (same slant preferred, ties go lighter); null when nothing is comparable.
+function __deckPickStyle(styles, style) {
+	var key = __deckStyleKey(style);
+	for (var i = 0; i < styles.length; i++) if (__deckStyleKey(styles[i]) === key) return styles[i];
+	var want = __deckStyleInfo(style);
+	if (!want) return null;
+	var best = null;
+	var bestRank = null;
+	for (var j = 0; j < styles.length; j++) {
+		var info = __deckStyleInfo(styles[j]);
+		if (!info) continue;
+		var rank = [info.italic === want.italic ? 0 : 1, Math.abs(info.weight - want.weight), info.weight];
+		var better =
+			!bestRank ||
+			rank[0] < bestRank[0] ||
+			(rank[0] === bestRank[0] && (rank[1] < bestRank[1] || (rank[1] === bestRank[1] && rank[2] < bestRank[2])));
+		if (better) {
+			best = styles[j];
+			bestRank = rank;
+		}
+	}
+	return best;
+}
+
+// Resolves {family, style} to a font Figma has (one listAvailableFontsAsync per loader) and loads it.
+// Order: the family's own style (spelling-insensitive, else nearest weight), Inter's, then the plain
+// fallbacks. Any substitution is recorded as a warning.
 function __deckFontLoader(warnings) {
 	var cache = {};
+	var listed = false;
+	var byFamily = null;
+	async function families() {
+		if (listed) return byFamily;
+		listed = true;
+		try {
+			var all = await figma.listAvailableFontsAsync();
+			byFamily = Object.create(null);
+			for (var i = 0; i < all.length; i++) {
+				var fn = all[i].fontName;
+				if (!byFamily[fn.family]) byFamily[fn.family] = [];
+				byFamily[fn.family].push(fn.style);
+			}
+		} catch (e) {
+			byFamily = null;
+		}
+		return byFamily;
+	}
 	return async function (f) {
 		var key = f.family + "|" + f.style;
 		if (cache[key]) return cache[key];
-		var tries = [
+		var tries = [];
+		var by = await families();
+		var names = [f.family, "Inter"];
+		for (var n = 0; by && n < names.length; n++) {
+			var picked = by[names[n]] ? __deckPickStyle(by[names[n]], f.style) : null;
+			if (picked) tries.push({ family: names[n], style: picked });
+		}
+		tries.push(
 			f,
 			{ family: f.family, style: "Regular" },
 			{ family: "Inter", style: f.style },
-			{ family: "Inter", style: "Regular" },
-		];
+			{ family: "Inter", style: "Regular" }
+		);
 		for (var i = 0; i < tries.length; i++) {
 			try {
 				await figma.loadFontAsync(tries[i]);
-				if (i > 0) warnings.push("font-fallback:" + key + "->" + tries[i].family + " " + tries[i].style);
+				if (tries[i].family !== f.family || tries[i].style !== f.style)
+					warnings.push("font-fallback:" + key + "->" + tries[i].family + " " + tries[i].style);
 				cache[key] = tries[i];
 				return tries[i];
 			} catch (e) {}
@@ -138,8 +224,9 @@ async function __deckApply(node, p, loadFont) {
 	if (p.opacity !== undefined) node.opacity = p.opacity;
 	if (node.type === "TEXT") {
 		if (p.w !== undefined) {
-			node.textAutoResize = "HEIGHT";
+			// resize() switches a text node to fixed size, so set auto-height afterwards.
 			node.resize(Math.max(p.w, 0.01), node.height);
+			node.textAutoResize = "HEIGHT";
 		}
 	} else if (p.w !== undefined || p.h !== undefined) {
 		node.resize(
@@ -294,33 +381,39 @@ async function __deckMakeEntrance(cmd) {
 	var slide = await figma.getNodeByIdAsync(cmd.slideId);
 	if (!slide || slide.type !== "SLIDE") throw new Error("Node " + cmd.slideId + " is not a SLIDE");
 	var copy = slide.clone();
-	copy.name = slide.name + " · enter";
-	await __deckPlace(copy, slide.id, 0);
-	var start = cmd.start || {};
-	var targets = copy.findAll(function (n) {
-		return __deckHas(start, n.getPluginData("importId"));
-	});
-	for (var i = 0; i < targets.length; i++) {
-		var n = targets[i];
-		var s = start[n.getPluginData("importId")];
-		if (s.opacity !== undefined) n.opacity = s.opacity;
-		if (s.scale !== undefined && s.scale !== 1) {
-			var cx = n.x + n.width / 2;
-			var cy = n.y + n.height / 2;
-			n.rescale(Math.max(0.01, s.scale));
-			n.x = cx - n.width / 2;
-			n.y = cy - n.height / 2;
+	try {
+		copy.name = slide.name + " · enter";
+		await __deckPlace(copy, slide.id, 0);
+		var start = cmd.start || {};
+		var targets = copy.findAll(function (n) {
+			return __deckHas(start, n.getPluginData("importId"));
+		});
+		for (var i = 0; i < targets.length; i++) {
+			var n = targets[i];
+			var s = start[n.getPluginData("importId")];
+			if (s.opacity !== undefined) n.opacity = s.opacity;
+			if (s.scale !== undefined && s.scale !== 1) {
+				var cx = n.x + n.width / 2;
+				var cy = n.y + n.height / 2;
+				n.rescale(Math.max(0.01, s.scale));
+				n.x = cx - n.width / 2;
+				n.y = cy - n.height / 2;
+			}
+			if (s.dx) n.x += s.dx;
+			if (s.dy) n.y += s.dy;
 		}
-		if (s.dx) n.x += s.dx;
-		if (s.dy) n.y += s.dy;
+		copy.setSlideTransition(__DECK_NO_TRANSITION);
+		slide.setSlideTransition({
+			style: "SMART_ANIMATE",
+			duration: Math.max(0.01, cmd.transition.duration),
+			curve: cmd.transition.curve,
+			timing: { type: "AFTER_DELAY", delay: 0 },
+		});
+	} catch (e) {
+		// All or nothing: a half-built start copy would play as a stray extra slide.
+		copy.remove();
+		throw e;
 	}
-	copy.setSlideTransition(__DECK_NO_TRANSITION);
-	slide.setSlideTransition({
-		style: "SMART_ANIMATE",
-		duration: Math.max(0.01, cmd.transition.duration),
-		curve: cmd.transition.curve,
-		timing: { type: "AFTER_DELAY", delay: 0 },
-	});
 	return { enterSlideId: copy.id };
 }
 

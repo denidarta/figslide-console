@@ -62,6 +62,7 @@ export class FNode {
 			c[k] = this[k];
 		c.pluginData = { ...this.pluginData };
 		for (const ch of this.children) c.appendChild(ch.clone());
+		this.owner.onClone?.(c);
 		return c;
 	}
 	findAll(cb: (n: FNode) => boolean): FNode[] {
@@ -81,10 +82,11 @@ export class FNode {
 	setPluginData(k: string, v: string) {
 		this.pluginData[k] = v;
 	}
+	/** Like Figma: resizing a text node freezes it at a fixed size (auto-resize NONE). */
 	resize(w: number, h: number) {
+		if (this.type === "TEXT") this.textAutoResize = "NONE";
 		this.width = w;
-		if (!(this.type === "TEXT" && this.textAutoResize === "HEIGHT"))
-			this.height = h;
+		this.height = h;
 	}
 	rescale(s: number) {
 		this.width *= s;
@@ -132,6 +134,35 @@ export class FakeFigma {
 	/** `createSlide` succeeds only when true (an empty Slides deck throws). */
 	canCreateSlide = false;
 	missingFamilies = new Set<string>();
+	/** Installed fonts. Styles are spelled the way each family spells them in Figma (Inter: "Semi Bold"). */
+	availableFonts: { family: string; style: string }[] = [
+		...[
+			"Thin",
+			"ExtraLight",
+			"Light",
+			"Regular",
+			"Medium",
+			"SemiBold",
+			"Bold",
+			"ExtraBold",
+			"Black",
+		].map((style) => ({ family: "Geist", style })),
+		...[
+			"Thin",
+			"Extra Light",
+			"Light",
+			"Regular",
+			"Medium",
+			"Semi Bold",
+			"Bold",
+			"Extra Bold",
+			"Black",
+			"Italic",
+			"Bold Italic",
+		].map((style) => ({ family: "Inter", style })),
+	];
+	/** Called with every cloned node, to inject failures. */
+	onClone?: (clone: FNode) => void;
 	readonly mixed = Symbol("mixed");
 
 	/** Adds a slide the way a user would: appended to the last row. */
@@ -143,6 +174,11 @@ export class FakeFigma {
 		if (!this.rows.length) this.rows.push([]);
 		this.rows[this.rows.length - 1].push(s);
 		return s;
+	}
+	installedFonts() {
+		return this.availableFonts.filter(
+			(f) => !this.missingFamilies.has(f.family),
+		);
 	}
 	/** The slides of the grid, in order. */
 	gridIds() {
@@ -185,9 +221,15 @@ export class FakeFigma {
 					throw new Error("Cannot create node with type SLIDE");
 				return this.addSlide("New");
 			},
+			listAvailableFontsAsync: async () =>
+				this.installedFonts().map((fontName) => ({ fontName })),
 			loadFontAsync: async (f: { family: string; style: string }) => {
-				if (this.missingFamilies.has(f.family))
-					throw new Error(`Font ${f.family} not found`);
+				if (
+					!this.installedFonts().some(
+						(a) => a.family === f.family && a.style === f.style,
+					)
+				)
+					throw new Error(`Font ${f.family} ${f.style} not found`);
 				this.loadedFonts.push(f);
 			},
 			base64Decode: (s: string) => new Uint8Array(Buffer.from(s, "base64")),

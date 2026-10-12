@@ -1,4 +1,4 @@
-import { letterSpacingPercent, mapFontWeight, parseColor } from "./css.js";
+import { letterSpacingPercent, mapFontWeight, parseColorRaw } from "./css.js";
 import type { Effect, NodeIR, Paint, RGBA, SlideIR, TextRun } from "./types.js";
 
 /**
@@ -100,6 +100,12 @@ const firstFamily = (css: string) =>
 		.trim()
 		.replace(/^["']|["']$/g, "");
 
+/** Transparent text paints nothing; a colour we cannot parse falls back to black rather than vanishing. */
+function runFills(css: string): FigmaPaint[] {
+	const c = parseColorRaw(css) ?? { r: 0, g: 0, b: 0, a: 1 };
+	return c.a > 0 ? [solid(c)] : [];
+}
+
 function textProps(runs: TextRun[]) {
 	let at = 0;
 	let lineHeightPx = 0;
@@ -124,7 +130,7 @@ function textProps(runs: TextRun[]) {
 					/italic|oblique/.test(r.fontStyle),
 				).style,
 				fontSize: r.fontSize,
-				fills: [solid(parseColor(r.color) ?? { r: 0, g: 0, b: 0, a: 1 })],
+				fills: runFills(r.color),
 				letterSpacing: {
 					unit: "PERCENT",
 					value: letterSpacingPercent(r.letterSpacing, r.fontSize),

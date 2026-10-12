@@ -19,7 +19,7 @@ function splitTop(s: string): string[] {
 }
 
 /** One `rgb()/rgba()/#hex/transparent` token, alpha 0 kept. Named colors are unsupported (computed style never has them). */
-function parseColorRaw(css: string): RGBA | null {
+export function parseColorRaw(css: string): RGBA | null {
 	const s = css.trim().toLowerCase();
 	if (s === "transparent") return { r: 0, g: 0, b: 0, a: 0 };
 	const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(s);

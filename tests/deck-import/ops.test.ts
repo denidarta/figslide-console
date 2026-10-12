@@ -333,6 +333,24 @@ describe("buildOps", () => {
 		});
 	});
 
+	it("gives transparent text no fill and unparseable colours black", () => {
+		const fillsOf = (color: string) => {
+			const [op] = buildOps(
+				slide([text("t", box(0, 0, 10, 10), [{ ...RUN, color }])]),
+				new Map(),
+			);
+			return (op.props.runs as { fills: unknown[] }[])[0].fills;
+		};
+		expect(fillsOf("rgba(0, 0, 0, 0)")).toEqual([]);
+		expect(fillsOf("transparent")).toEqual([]);
+		expect(fillsOf("rgba(255, 0, 0, 0.5)")).toEqual([
+			{ type: "SOLID", color: { r: 1, g: 0, b: 0 }, opacity: 0.5 },
+		]);
+		expect(fillsOf("not-a-colour")).toEqual([
+			{ type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity: 1 },
+		]);
+	});
+
 	it("names text after its content", () => {
 		const [op] = buildOps(slide([text("t", box(0, 0, 10, 10))]), new Map());
 		expect(op.name).toBe("Hello #t");

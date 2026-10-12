@@ -83,7 +83,8 @@ export class FigmaDeck {
 	/**
 	 * Builds the slide (and, when it has entrances, its start-state copy placed before it). `hashes` maps
 	 * image src / gifKey to Figma image hashes. With `replaceIds` the slide takes the first replaced slide's
-	 * place and the replaced slides are removed.
+	 * place and the replaced slides are removed. Once the slide exists this never throws: a failed entrance
+	 * comes back as an `entrance-failed` warning without `enterSlideId`.
 	 */
 	async buildSlide(
 		slide: SlideIR,
@@ -104,17 +105,26 @@ export class FigmaDeck {
 		const warnings: string[] = built.warnings ?? [];
 		if (!slide.entrance) return { slideId: built.slideId, warnings };
 		const { start, durationS, curve } = slide.entrance;
-		const entered = await this.run({
-			cmd: "makeEntrance",
-			slideId: built.slideId,
-			start,
-			transition: { duration: durationS, curve },
-		});
-		return {
-			slideId: built.slideId,
-			enterSlideId: entered.enterSlideId,
-			warnings,
-		};
+		// The slide exists now, so an entrance failure is a warning, not an error (the runtime removes
+		// a half-made start copy itself).
+		try {
+			const entered = await this.run({
+				cmd: "makeEntrance",
+				slideId: built.slideId,
+				start,
+				transition: { duration: durationS, curve },
+			});
+			return {
+				slideId: built.slideId,
+				enterSlideId: entered.enterSlideId,
+				warnings,
+			};
+		} catch (e) {
+			warnings.push(
+				`entrance-failed: ${e instanceof Error ? e.message : String(e)}`,
+			);
+			return { slideId: built.slideId, warnings };
+		}
 	}
 
 	async dump(slideId: string): Promise<FigmaDumpNode> {

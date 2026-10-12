@@ -144,6 +144,39 @@ describe("FigmaDeck", () => {
 		});
 	});
 
+	it("returns a warning, not an error, when the entrance fails after the slide exists", async () => {
+		const sb = new Sandbox();
+		sb.fake.addSlide("Blank");
+		let slideClones = 0;
+		sb.fake.onClone = (c) => {
+			// clone 1 is the template for the new slide, clone 2 is the entrance copy
+			if (c.type === "SLIDE" && ++slideClones === 2)
+				c.setSlideTransition = () => {
+					throw new Error("transitions unavailable");
+				};
+		};
+		const res = await new FigmaDeck(connectorFor(sb)).buildSlide(
+			slide({
+				entrance: {
+					durationS: 0.5,
+					curve: "EASE_OUT",
+					start: { "s0-n1": { opacity: 0 } },
+				},
+			}),
+			new Map([["logo.png", "H"]]),
+		);
+		expect(sb.fake.nodes.get(res.slideId)?.name).toBe("Title");
+		expect(res.enterSlideId).toBeUndefined();
+		expect(res.warnings).toEqual([
+			expect.stringMatching(/^entrance-failed: .*transitions unavailable/),
+		]);
+		// the runtime removed the half-made copy
+		expect(
+			sb.fake.pageSlides.filter((s) => !s.removed && s.name.endsWith("enter")),
+		).toEqual([]);
+		expect(sb.fake.gridIds()[0]).toHaveLength(2);
+	});
+
 	it("passes replaceIds through", async () => {
 		const sb = new Sandbox();
 		const a = sb.fake.addSlide("A");

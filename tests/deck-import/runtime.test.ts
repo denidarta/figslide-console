@@ -336,10 +336,10 @@ describe("runtime buildSlide", () => {
 		const t = sb.fake.nodes.get(res.slideId)?.children[0];
 		expect(t?.rangeFonts[0].font).toEqual({
 			family: "Inter",
-			style: "SemiBold",
+			style: "Semi Bold",
 		});
 		expect(res.warnings).toContain(
-			"font-fallback:Geist|SemiBold->Inter SemiBold",
+			"font-fallback:Geist|SemiBold->Inter Semi Bold",
 		);
 	});
 
@@ -373,6 +373,145 @@ describe("runtime buildSlide", () => {
 			afterId: s1.id,
 		})) as { slideId: string };
 		expect(sb.fake.gridIds()).toEqual([[s1.id, res.slideId, s2.id]]);
+	});
+});
+
+describe("runtime font resolution", () => {
+	const run = (family: string, style: string, start: number, end: number) => ({
+		start,
+		end,
+		family,
+		style,
+		fontSize: 20,
+		fills: GREY,
+		letterSpacing: { unit: "PERCENT", value: 0 },
+		lineHeight: { unit: "PIXELS", value: 24 },
+		decoration: "NONE",
+	});
+	async function build(runs: ReturnType<typeof run>[], sb?: Sandbox) {
+		const box = sb ?? deckWithOneSlide().sb;
+		const res = (await box.run({
+			cmd: "buildSlide",
+			slide: slideMeta(),
+			ops: [
+				textOp("t", null, {
+					text: "x".repeat(runs[runs.length - 1].end),
+					runs,
+				}),
+			],
+		})) as { slideId: string; warnings: string[] };
+		const t = box.fake.nodes.get(res.slideId)?.children[0];
+		return {
+			box,
+			warnings: res.warnings,
+			fonts: t?.rangeFonts.map((r: { font: unknown }) => r.font),
+		};
+	}
+
+	it("maps canonical style names onto each family's own spelling", async () => {
+		const r = await build([
+			run("Inter", "SemiBold", 0, 1),
+			run("Inter", "ExtraBold", 1, 2),
+			run("Inter", "ExtraLight", 2, 3),
+			run("Inter", "BoldItalic", 3, 4),
+			run("Geist", "SemiBold", 4, 5),
+		]);
+		expect(r.fonts).toEqual([
+			{ family: "Inter", style: "Semi Bold" },
+			{ family: "Inter", style: "Extra Bold" },
+			{ family: "Inter", style: "Extra Light" },
+			{ family: "Inter", style: "Bold Italic" },
+			{ family: "Geist", style: "SemiBold" },
+		]);
+		expect(r.warnings).toEqual([
+			"font-fallback:Inter|SemiBold->Inter Semi Bold",
+			"font-fallback:Inter|ExtraBold->Inter Extra Bold",
+			"font-fallback:Inter|ExtraLight->Inter Extra Light",
+			"font-fallback:Inter|BoldItalic->Inter Bold Italic",
+		]); // Geist SemiBold is exact: no warning
+	});
+
+	it("takes the nearest weight of the same family before Inter", async () => {
+		const { sb } = deckWithOneSlide();
+		sb.fake.availableFonts.push(
+			{ family: "Foo", style: "Regular" },
+			{ family: "Foo", style: "Bold" },
+		);
+		const r = await build(
+			[run("Foo", "SemiBold", 0, 1), run("Foo", "Light", 1, 2)],
+			sb,
+		);
+		expect(r.fonts).toEqual([
+			{ family: "Foo", style: "Bold" },
+			{ family: "Foo", style: "Regular" },
+		]);
+		expect(r.warnings).toEqual([
+			"font-fallback:Foo|SemiBold->Foo Bold",
+			"font-fallback:Foo|Light->Foo Regular",
+		]);
+	});
+
+	it("prefers the same slant when picking the nearest weight", async () => {
+		const { sb } = deckWithOneSlide();
+		sb.fake.availableFonts.push(
+			{ family: "Foo", style: "Regular" },
+			{ family: "Foo", style: "Italic" },
+			{ family: "Foo", style: "Bold" },
+			{ family: "Foo", style: "Bold Italic" },
+		);
+		const r = await build(
+			[run("Foo", "SemiBold Italic", 0, 1), run("Foo", "Medium", 1, 2)],
+			sb,
+		);
+		expect(r.fonts).toEqual([
+			{ family: "Foo", style: "Bold Italic" },
+			{ family: "Foo", style: "Regular" },
+		]);
+	});
+
+	it("falls back to Inter in its own spelling when the family is not installed", async () => {
+		const r = await build([run("Nope", "ExtraBold", 0, 1)]);
+		expect(r.fonts).toEqual([{ family: "Inter", style: "Extra Bold" }]);
+		expect(r.warnings).toEqual([
+			"font-fallback:Nope|ExtraBold->Inter Extra Bold",
+		]);
+	});
+
+	it("lists the installed fonts once per call", async () => {
+		const { sb } = deckWithOneSlide();
+		let listed = 0;
+		const api = sb.fake.api;
+		sb.fake.api = () => {
+			const f = api.call(sb.fake);
+			const list = f.listAvailableFontsAsync;
+			f.listAvailableFontsAsync = async () => {
+				listed++;
+				return list();
+			};
+			return f;
+		};
+		sb.reset();
+		await build(
+			[run("Inter", "SemiBold", 0, 1), run("Geist", "Bold", 1, 2)],
+			sb,
+		);
+		expect(listed).toBe(1);
+	});
+
+	it("still loads fonts when the list is unavailable", async () => {
+		const { sb } = deckWithOneSlide();
+		const api = sb.fake.api;
+		sb.fake.api = () => {
+			const f = api.call(sb.fake);
+			f.listAvailableFontsAsync = async () => {
+				throw new Error("no font list");
+			};
+			return f;
+		};
+		sb.reset();
+		const r = await build([run("Geist", "SemiBold", 0, 1)], sb);
+		expect(r.fonts).toEqual([{ family: "Geist", style: "SemiBold" }]);
+		expect(r.warnings).toEqual([]);
 	});
 });
 
@@ -446,6 +585,56 @@ describe("runtime makeEntrance", () => {
 		const g = copy?.findAll((n) => n.getPluginData("importId") === "s0-n4")[0];
 		expect(g?.opacity).toBe(0);
 		expect(g?.rescaled).toBe(0.01); // clamped, Figma cannot size to 0
+	});
+
+	it("removes the start copy and leaves the original alone when the copy's transition fails", async () => {
+		const { sb, slideId } = await built();
+		const before = sb.fake.gridIds();
+		const original = sb.fake.nodes.get(slideId);
+		const transition = original?.transition;
+		sb.fake.onClone = (c) => {
+			if (c.type === "SLIDE")
+				c.setSlideTransition = () => {
+					throw new Error("transitions unavailable");
+				};
+		};
+		await expect(
+			sb.run({
+				cmd: "makeEntrance",
+				slideId,
+				start: { "s0-n3": { opacity: 0 } },
+				transition: { duration: 0.5, curve: "EASE_OUT" },
+			}),
+		).rejects.toThrow("transitions unavailable");
+		expect(sb.fake.gridIds()).toEqual(before);
+		expect(
+			sb.fake.pageSlides.filter((x) => !x.removed && x.name.endsWith("enter")),
+		).toEqual([]);
+		expect(original?.transition).toEqual(transition);
+	});
+
+	it("removes the start copy when the original's transition fails after the copy's succeeded", async () => {
+		const { sb, slideId } = await built();
+		const before = sb.fake.gridIds();
+		const original = sb.fake.nodes.get(slideId);
+		const transition = original?.transition;
+		if (original)
+			original.setSlideTransition = () => {
+				throw new Error("smart animate unavailable");
+			};
+		await expect(
+			sb.run({
+				cmd: "makeEntrance",
+				slideId,
+				start: {},
+				transition: { duration: 0.5, curve: "EASE_OUT" },
+			}),
+		).rejects.toThrow("smart animate unavailable");
+		expect(sb.fake.gridIds()).toEqual(before);
+		expect(
+			sb.fake.pageSlides.filter((x) => !x.removed && x.name.endsWith("enter")),
+		).toEqual([]);
+		expect(original?.transition).toEqual(transition);
 	});
 
 	it("never sets a duration below 0.01", async () => {
@@ -645,7 +834,11 @@ describe("runtime patch", () => {
 				],
 			},
 		});
-		expect(t).toMatchObject({ characters: "Hi", width: 250 });
+		expect(t).toMatchObject({
+			characters: "Hi",
+			width: 250,
+			textAutoResize: "HEIGHT",
+		});
 		expect(t?.getPluginData("lineHeightPx")).toBe("30");
 		expect(t?.rangeFonts[t.rangeFonts.length - 1].font).toEqual({
 			family: "Geist",
