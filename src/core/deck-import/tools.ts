@@ -14,11 +14,13 @@ import {
 } from "./pipeline.js";
 import { loadState, pendingSlides, saveState, writeReport } from "./state.js";
 import type { ImportState } from "./types.js";
-import { extractZip, listDecks, workDirFor } from "./zip.js";
+import { deckDirFor, extractZip, listDecks, workDirFor } from "./zip.js";
 
 const logger = createChildLogger({ component: "deck-import-tools" });
 
 const MAX_ISSUES = 10;
+/** Cap on issues / nodes in view and patch output. */
+const MAX_LIST = 50;
 const ROUND_LIMIT = 3;
 const OVER_LIMIT_PERCENT = 10;
 
@@ -76,6 +78,32 @@ function parseSlides(spec: string, total: number): number[] {
 	return [...out].sort((a, b) => a - b);
 }
 
+/** Extracts the zip, checks `deckFile` is one of its decks (exact name) and resolves the dirs. */
+async function openDeck(zipPath: string, deckFile: string) {
+	const srcDir = await extractZip(zipPath);
+	const decks = await listDecks(srcDir);
+	const found = decks.find((d) => d.file === deckFile);
+	if (!found)
+		throw new Error(
+			`No deck "${deckFile}" in the zip. Decks: ${decks.map((d) => d.file).join(", ") || "none"}`,
+		);
+	return {
+		srcDir,
+		total: found.slideCount,
+		workDir: workDirFor(zipPath),
+		deckDir: deckDirFor(zipPath, found.file),
+	};
+}
+
+/** At most MAX_LIST items, and a "+N more" marker for the rest, so tool output stays bounded. */
+function capped<T>(list: T[]) {
+	return {
+		items: list.slice(0, MAX_LIST),
+		more:
+			list.length > MAX_LIST ? `+${list.length - MAX_LIST} more` : undefined,
+	};
+}
+
 /** The slide that holds the final content: figmaIds is `[enterSlideId?, slideId]`. */
 const slideIdOf = (s: ImportState["slides"][number] | undefined) =>
 	s?.figmaIds[s.figmaIds.length - 1];
@@ -86,6 +114,9 @@ export function registerDeckImportTools(
 ): void {
 	const zipPath = z
 		.string()
+		.refine((p) => path.isAbsolute(p) && /\.zip$/i.test(p), {
+			message: "zipPath must be an absolute path to a .zip file",
+		})
 		.describe("Absolute path to the design-artifact .zip");
 	const deck = z
 		.string()
@@ -94,7 +125,7 @@ export function registerDeckImportTools(
 
 	server.tool(
 		"deck_list",
-		`List the decks (*.dc.html) in a Claude design-artifact zip with their slide counts. Extracts the zip into <zip dir>/<zip name>.import/src and returns that work dir. ${LOOP}`,
+		`List the decks (*.dc.html) in a Claude design-artifact zip with their slide counts. Extracts the zip into <zip dir>/<zip name>.import/src and returns that work dir (per-deck state, screenshots and report live in <work dir>/decks/<deck name>/). ${LOOP}`,
 		{ zipPath },
 		async ({ zipPath }) => {
 			try {
@@ -109,7 +140,7 @@ export function registerDeckImportTools(
 
 	server.tool(
 		"deck_import",
-		`Import slides of a deck into the open Figma Slides file as native layers (text stays text; only bitmap images and looping regions become images). Per slide: capture the HTML in headless Chrome, build the layers, screenshot both sides into <work dir>/shots, and run QA. Returns per slide { n, status passed|imported, figmaIds, issues (max ${MAX_ISSUES}), flags }. With slides omitted it does every slide not yet passed or flagged (resumable); force re-does all; slides ("7" or "1-10", 1-based) always re-does the named slides, replacing their earlier import. ${LOOP}`,
+		`Import slides of a deck into the open Figma Slides file as native layers (text stays text; only bitmap images and looping regions become images). Per slide: capture the HTML in headless Chrome, build the layers, screenshot both sides into <work dir>/decks/<deck name>/shots, and run QA. Returns per slide { n, status passed|imported, figmaIds, issues (max ${MAX_ISSUES}), flags }. With slides omitted it does every slide not yet passed or flagged (resumable); force re-does all; slides ("7" or "1-10", 1-based) always re-does the named slides, replacing their earlier import. ${LOOP}`,
 		{
 			zipPath,
 			deck,
@@ -130,16 +161,11 @@ export function registerDeckImportTools(
 			let current: number | undefined;
 			const results: object[] = [];
 			try {
-				const srcDir = await extractZip(zipPath);
-				const decks = await listDecks(srcDir);
-				const found = decks.find((d) => d.file === deckFile);
-				if (!found)
-					throw new Error(
-						`No deck "${deckFile}" in the zip. Decks: ${decks.map((d) => d.file).join(", ") || "none"}`,
-					);
-				const total = found.slideCount;
-				const workDir = workDirFor(zipPath);
-				const state = loadState(workDir, zipPath, deckFile);
+				const { srcDir, total, workDir, deckDir } = await openDeck(
+					zipPath,
+					deckFile,
+				);
+				const state = loadState(deckDir, zipPath, deckFile);
 				// Every slide is known from the start, so the report's flagged % uses the deck size.
 				for (let n = 1; n <= total; n++) state.slides[n] ??= blank();
 				const todo = slides
@@ -147,10 +173,11 @@ export function registerDeckImportTools(
 					: force
 						? Array.from({ length: total }, (_, i) => i + 1)
 						: pendingSlides(state, total);
-				saveState(workDir, state);
+				saveState(deckDir, state);
 				if (!todo.length)
 					return ok({
 						workDir,
+						deckDir,
 						slides: [],
 						note: "Every slide is already passed or flagged. Use slides or force to redo some.",
 					});
@@ -169,12 +196,13 @@ export function registerDeckImportTools(
 							session,
 							figma,
 							srcDir,
-							workDir,
+							cacheDir: path.join(workDir, "cache"),
+							deckDir,
 							// Record the new ids at once: a failure after the build must not orphan the slide.
 							onBuilt: (ids) => {
 								entry.figmaIds = ids;
 								entry.status = "imported";
-								saveState(workDir, state);
+								saveState(deckDir, state);
 							},
 						},
 						n,
@@ -188,7 +216,7 @@ export function registerDeckImportTools(
 						...entry.flags.filter((f) => f.startsWith("fixed:")),
 						...out.flags,
 					]);
-					saveState(workDir, state);
+					saveState(deckDir, state);
 					results.push({
 						n,
 						status: entry.status,
@@ -198,7 +226,7 @@ export function registerDeckImportTools(
 						flags: entry.flags,
 					});
 				}
-				return ok({ workDir, slides: results });
+				return ok({ workDir, deckDir, slides: results });
 			} catch (error) {
 				logger.error({ error }, "deck_import failed");
 				return fail(error, hint, {
@@ -213,13 +241,13 @@ export function registerDeckImportTools(
 
 	server.tool(
 		"deck_slide_view",
-		`Look at one imported slide: returns two PNGs (1: the HTML render, the reference, 1920x1080; 2: the Figma import, at most 1568px wide) and a JSON text with the current QA result and every import node as { id, kind, parent, box [x,y,w,h] in 1920x1080 slide px } so a region you see maps to an importId for deck_patch. ${LOOP}`,
+		`Look at one imported slide: returns two PNGs (1: the HTML render, the reference, 1920x1080; 2: the Figma import, at most 1568px wide) and a JSON text with the current QA result and the import nodes as { id, kind, parent, box [x,y,w,h] in 1920x1080 slide px } so a region you see maps to an importId for deck_patch. Issues and nodes are capped at ${MAX_LIST} each, followed by a "+N more" marker (nodes named by an issue come first). ${LOOP}`,
 		{ zipPath, deck, slide },
 		async ({ zipPath, deck: deckFile, slide }) => {
-			let hint = BRIDGE_HINT;
+			let hint = ZIP_HINT;
 			try {
-				const workDir = workDirFor(zipPath);
-				const state = loadState(workDir, zipPath, deckFile);
+				const { srcDir, deckDir } = await openDeck(zipPath, deckFile);
+				const state = loadState(deckDir, zipPath, deckFile);
 				const entry = state.slides[slide];
 				const slideId = slideIdOf(entry);
 				if (!slideId)
@@ -228,17 +256,15 @@ export function registerDeckImportTools(
 						IMPORT_FIRST_HINT,
 					);
 
+				hint = BRIDGE_HINT;
 				const figma = new FigmaDeck(await getDesktopConnector());
-				const shots = path.join(workDir, "shots");
+				const shots = path.join(deckDir, "shots");
 				const htmlPath = path.join(shots, `${slide}-html.png`);
 				const figmaPath = path.join(shots, `${slide}-figma.png`);
 				// The HTML side never changes after import, so reuse its shot and skip launching Chrome.
 				if (!fs.existsSync(htmlPath)) {
 					hint = CHROME_HINT;
-					const session = await DeckSession.open(
-						await extractZip(zipPath),
-						deckFile,
-					);
+					const session = await DeckSession.open(srcDir, deckFile);
 					try {
 						fs.mkdirSync(shots, { recursive: true });
 						await session.screenshot(slide - 1, htmlPath);
@@ -248,7 +274,19 @@ export function registerDeckImportTools(
 					hint = BRIDGE_HINT;
 				}
 				await figma.screenshot(slideId, figmaPath);
-				const { built, qa } = await recheck(figma, workDir, slide, slideId);
+				const { built, qa } = await recheck(figma, deckDir, slide, slideId);
+				const issues = capped(qa.issues);
+				// Nodes named by an issue come first, so the cap never hides the ids a fix needs.
+				const hot = new Set(qa.issues.map((i) => i.importId));
+				const all = irSummary(built.ir);
+				const nodes = capped(
+					all.length > MAX_LIST
+						? [
+								...all.filter((n) => hot.has(n.id)),
+								...all.filter((n) => !hot.has(n.id)),
+							]
+						: all,
+				);
 
 				const image = (file: string) => ({
 					type: "image" as const,
@@ -267,8 +305,13 @@ export function registerDeckImportTools(
 								rounds: entry.rounds,
 								flags: entry.flags,
 								reason: entry.reason,
-								qa,
-								nodes: irSummary(built.ir),
+								qa: {
+									pass: qa.pass,
+									issues: issues.items,
+									issuesMore: issues.more,
+								},
+								nodes: nodes.items,
+								nodesMore: nodes.more,
 							}),
 						},
 					],
@@ -282,7 +325,7 @@ export function registerDeckImportTools(
 
 	server.tool(
 		"deck_patch",
-		`Fix one node of an imported slide in place, without re-importing. importId is the id from deck_slide_view or an issue (the Figma node is found by it). props are Figma-API-form values, all optional: x, y (relative to the node's parent frame, not the slide), w, h, opacity, fills (Figma Paint[]), strokes { paints, weights [t,r,b,l], dashed }, radii [tl,tr,br,bl], effects, clip, text, runs, align. Re-dumps and re-checks the slide, counts one round, marks it passed when clean, and returns the new QA result. ${LOOP}`,
+		`Fix one node of an imported slide in place, without re-importing. importId is the id from deck_slide_view or an issue (the Figma node is found by it). props are Figma-API-form values, all optional: x, y (relative to the node's parent frame, not the slide), w, h, opacity, fills (Figma Paint[]), strokes { paints, weights [t,r,b,l], dashed }, radii [tl,tr,br,bl], effects, clip, text, runs, align. Re-dumps and re-checks the slide, counts one round, marks it passed when clean, and returns the new QA result (issues capped at ${MAX_LIST}, followed by a "+N more" marker). ${LOOP}`,
 		{
 			zipPath,
 			deck,
@@ -293,9 +336,10 @@ export function registerDeckImportTools(
 				.describe("Properties to set, in Figma API form"),
 		},
 		async ({ zipPath, deck: deckFile, slide, importId, props }) => {
+			let hint = ZIP_HINT;
 			try {
-				const workDir = workDirFor(zipPath);
-				const state = loadState(workDir, zipPath, deckFile);
+				const { deckDir } = await openDeck(zipPath, deckFile);
+				const state = loadState(deckDir, zipPath, deckFile);
 				const entry = state.slides[slide];
 				const slideId = slideIdOf(entry);
 				if (!slideId)
@@ -304,10 +348,11 @@ export function registerDeckImportTools(
 						IMPORT_FIRST_HINT,
 					);
 
+				hint = BRIDGE_HINT;
 				const figma = new FigmaDeck(await getDesktopConnector());
 				const { dump, qa: before } = await recheck(
 					figma,
-					workDir,
+					deckDir,
 					slide,
 					slideId,
 				);
@@ -318,7 +363,7 @@ export function registerDeckImportTools(
 						"Use ids from deck_slide_view's nodes list. A dropped node (image-unsupported, missing-icon) has none.",
 					);
 				const { warnings } = await figma.patch(target.id, props);
-				const { qa } = await recheck(figma, workDir, slide, slideId);
+				const { qa } = await recheck(figma, deckDir, slide, slideId);
 
 				entry.rounds += 1;
 				entry.status = qa.pass
@@ -332,16 +377,19 @@ export function registerDeckImportTools(
 					...warnings,
 					...fixedFlags(before, qa),
 				]);
-				saveState(workDir, state);
+				saveState(deckDir, state);
 				// Keep the report's Figma shot current; the patch itself already succeeded.
 				await figma
 					.screenshot(
 						slideId,
-						path.join(workDir, "shots", `${slide}-figma.png`),
+						path.join(deckDir, "shots", `${slide}-figma.png`),
 					)
 					.catch(() => {});
+				const issues = capped(qa.issues);
 				return ok({
-					...qa,
+					pass: qa.pass,
+					issues: issues.items,
+					issuesMore: issues.more,
 					status: entry.status,
 					rounds: entry.rounds,
 					warnings,
@@ -353,7 +401,7 @@ export function registerDeckImportTools(
 				});
 			} catch (error) {
 				logger.error({ error }, "deck_patch failed");
-				return fail(error, BRIDGE_HINT);
+				return fail(error, hint);
 			}
 		},
 	);
@@ -370,13 +418,25 @@ export function registerDeckImportTools(
 		},
 		async ({ zipPath, deck: deckFile, slide, status, reason }) => {
 			try {
-				const workDir = workDirFor(zipPath);
-				const state = loadState(workDir, zipPath, deckFile);
-				const entry = state.slides[slide] ?? blank();
-				state.slides[slide] = entry;
+				const { total, deckDir } = await openDeck(zipPath, deckFile);
+				if (slide > total)
+					return fail(
+						`Slide ${slide} is outside 1-${total}`,
+						"Slides are numbered from 1.",
+					);
+				// loadState starts fresh for a missing file; that state is never saved from here.
+				const state = loadState(deckDir, zipPath, deckFile);
+				const entry = state.slides[slide];
+				if (!entry)
+					return fail(`Slide ${slide} has no import state`, IMPORT_FIRST_HINT);
+				if (status === "passed" && !entry.figmaIds.length)
+					return fail(
+						`Slide ${slide} was never imported, so it cannot be marked passed`,
+						IMPORT_FIRST_HINT,
+					);
 				entry.status = status;
 				entry.reason = reason || undefined;
-				saveState(workDir, state);
+				saveState(deckDir, state);
 				return ok({ slide, status, reason: entry.reason });
 			} catch (error) {
 				logger.error({ error }, "deck_mark failed");
@@ -387,19 +447,19 @@ export function registerDeckImportTools(
 
 	server.tool(
 		"deck_report",
-		`Write <work dir>/report.html (counts, flagged slides with reasons, recurring flag kinds, both screenshots per slide) and return its path with the counts. The import is accepted when at most ${OVER_LIMIT_PERCENT}% of slides are flagged. ${LOOP}`,
+		`Write <work dir>/decks/<deck name>/report.html (counts, flagged slides with reasons, recurring flag kinds, both screenshots per slide) and return its path with the counts. The import is accepted when at most ${OVER_LIMIT_PERCENT}% of slides are flagged. ${LOOP}`,
 		{ zipPath, deck },
 		async ({ zipPath, deck: deckFile }) => {
 			try {
-				const workDir = workDirFor(zipPath);
-				const state = loadState(workDir, zipPath, deckFile);
+				const { deckDir } = await openDeck(zipPath, deckFile);
+				const state = loadState(deckDir, zipPath, deckFile);
 				const rows = Object.values(state.slides);
 				if (!rows.length)
 					return fail("Nothing has been imported yet", IMPORT_FIRST_HINT);
 				const count = (s: string) => rows.filter((r) => r.status === s).length;
 				const flagged = count("flagged");
 				return ok({
-					path: writeReport(workDir, state),
+					path: writeReport(deckDir, state),
 					total: rows.length,
 					passed: count("passed"),
 					flagged,

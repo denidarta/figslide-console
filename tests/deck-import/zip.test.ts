@@ -2,7 +2,7 @@ import { zipSync, strToU8 } from 'fflate';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { extractZip, listDecks, workDirFor } from '../../src/core/deck-import/zip.js';
+import { deckDirFor, extractZip, listDecks, workDirFor } from '../../src/core/deck-import/zip.js';
 
 const section = (n: number) => '<section data-label="s"></section>'.repeat(n);
 const deck = (n: number) => `<deck-stage>${section(n)}</deck-stage>`;
@@ -28,6 +28,12 @@ describe('deck-import zip', () => {
 
 	it('workDirFor appends .import to the zip base name', () => {
 		expect(workDirFor('C:/a/My Deck.zip').split('\\').join('/')).toMatch(/My Deck\.import$/);
+	});
+
+	it('deckDirFor keeps one dir per deck under <workDir>/decks', () => {
+		const a = deckDirFor('C:/a/My Deck.zip', 'A.dc.html').split('\\').join('/');
+		expect(a).toMatch(/My Deck\.import\/decks\/A$/);
+		expect(deckDirFor('C:/a/My Deck.zip', 'B.dc.html')).not.toBe(deckDirFor('C:/a/My Deck.zip', 'A.dc.html'));
 	});
 
 	it('extractZip writes files and is idempotent', async () => {

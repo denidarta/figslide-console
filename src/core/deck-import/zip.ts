@@ -10,6 +10,19 @@ export function workDirFor(zipPath: string): string {
 	return path.join(dir, `${name}.import`);
 }
 
+/**
+ * Per-deck artifacts (`state.json`, `ir/`, `shots/`, `report.html`) live in
+ * `<workDir>/decks/<deck file without .dc.html>`, so two decks of one zip never share state.
+ * `src/` and `cache/` stay per zip. `deckFile` must be a name listDecks returned.
+ */
+export function deckDirFor(zipPath: string, deckFile: string): string {
+	return path.join(
+		workDirFor(zipPath),
+		'decks',
+		path.basename(deckFile).replace(/\.dc\.html$/i, ''),
+	);
+}
+
 function isUnsafe(entry: string): boolean {
 	const p = entry.split('\\').join('/');
 	return p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.split('/').includes('..');

@@ -72,7 +72,8 @@ const flatten = (list: NodeIR[]): NodeIR[] =>
 
 describe("importSlide", () => {
 	let tmp: string;
-	let workDir: string;
+	let deckDir: string;
+	let cacheDir: string;
 	let srcDir: string;
 	let rawNodes: RawNode[];
 	let anims: RawAnim[];
@@ -88,7 +89,8 @@ describe("importSlide", () => {
 				session: session as DeckSession,
 				figma: figma as FigmaDeck,
 				srcDir,
-				workDir,
+				cacheDir,
+				deckDir,
 				onBuilt,
 			},
 			1,
@@ -101,7 +103,8 @@ describe("importSlide", () => {
 
 	beforeEach(() => {
 		tmp = fs.mkdtempSync(path.join(os.tmpdir(), "deck-pipeline-"));
-		workDir = path.join(tmp, "deck.import");
+		deckDir = path.join(tmp, "deck.import", "decks", "Deck");
+		cacheDir = path.join(tmp, "deck.import", "cache");
 		srcDir = MINI;
 		rawNodes = [section()];
 		anims = [];
@@ -168,10 +171,10 @@ describe("importSlide", () => {
 		});
 		expect(session.capture).toHaveBeenCalledWith(0);
 		expect(
-			fs.readFileSync(path.join(workDir, "shots", "1-html.png"), "utf8"),
+			fs.readFileSync(path.join(deckDir, "shots", "1-html.png"), "utf8"),
 		).toBe("html");
 		expect(
-			fs.readFileSync(path.join(workDir, "shots", "1-figma.png"), "utf8"),
+			fs.readFileSync(path.join(deckDir, "shots", "1-figma.png"), "utf8"),
 		).toBe("figma");
 	});
 
@@ -502,7 +505,7 @@ describe("importSlide", () => {
 			const first = await run();
 			expect(first.qa.issues.map((i) => i.kind)).toEqual(["box"]);
 			expect(first.flags.some((f) => f.startsWith("fixed:"))).toBe(false);
-			const saved = loadBuilt(workDir, 1);
+			const saved = loadBuilt(deckDir, 1);
 			expect(saved?.ir.root).toHaveLength(1);
 			expect(saved?.expected).toEqual(["s0-n1"]);
 			expect(saved?.qa?.issues).toHaveLength(1);
@@ -511,7 +514,20 @@ describe("importSlide", () => {
 			const second = await run(["9:1"]);
 			expect(second.qa.pass).toBe(true);
 			expect(second.flags).toContain("fixed:box");
-			expect(loadBuilt(workDir, 1)?.qa?.pass).toBe(true);
+			expect(loadBuilt(deckDir, 1)?.qa?.pass).toBe(true);
+		});
+
+		it("writes the stored IR atomically and treats an unparsable file as missing", async () => {
+			rawNodes = redBox();
+			dumpWith = () => frameDump(10);
+			await run();
+			const dir = path.join(deckDir, "ir");
+			expect(fs.readdirSync(dir)).toEqual(["1.json"]); // no leftover temp file
+
+			fs.writeFileSync(path.join(dir, "1.json"), '{"ir": {"na'); // truncated by a crash
+			expect(loadBuilt(deckDir, 1)).toBeNull();
+			await expect(run(["9:1"])).resolves.toMatchObject({ qa: { pass: true } });
+			expect(loadBuilt(deckDir, 1)?.qa?.pass).toBe(true);
 		});
 	});
 });

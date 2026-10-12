@@ -142,7 +142,7 @@ Slides tools are documented in the [Slides guide](/slides). MCP Apps (`figma_bro
 
 ## 📥 Deck Import Tools (HTML deck to Figma Slides)
 
-Local Mode only. These tools import a Claude design-artifact `.zip` (a `*.dc.html` deck) into the open Figma Slides file as native layers: text stays text, shapes stay shapes, and only bitmap images and looping regions become images. They need the Desktop Bridge plugin running in a Slides file, Google Chrome (or `DECK_IMPORT_CHROME_PATH` pointing at a Chrome executable), and network access (web images, Google Fonts). Slide numbers are 1-based. Files go to `<zip dir>/<zip name>.import/` (`src/`, `shots/`, `ir/`, `state.json`, `report.html`).
+Local Mode only. These tools import a Claude design-artifact `.zip` (a `*.dc.html` deck) into the open Figma Slides file as native layers: text stays text, shapes stay shapes, and only bitmap images and looping regions become images. They need the Desktop Bridge plugin running in a Slides file, Google Chrome (or `DECK_IMPORT_CHROME_PATH` pointing at a Chrome executable), and network access (web images, Google Fonts). Slide numbers are 1-based. Files go to `<zip dir>/<zip name>.import/`: `src/` (extracted zip) and `cache/` (downloaded images) are shared by the zip's decks, and each deck keeps `state.json`, `ir/`, `shots/` and `report.html` in `decks/<deck name>/`, so importing one deck never touches another's state. `zipPath` must be an absolute path to a `.zip`.
 
 | Tool | Purpose |
 |------|---------|
@@ -153,7 +153,7 @@ Local Mode only. These tools import a Claude design-artifact `.zip` (a `*.dc.htm
 | `deck_mark` | Record your visual verdict: `passed`, or `flagged` with a reason |
 | `deck_report` | Write `report.html` and return its path with the passed / flagged counts |
 
-The loop each slide goes through: `deck_import` -> `deck_slide_view` -> `deck_patch` (or re-import) for at most 3 rounds -> `deck_mark` -> `deck_report`. Compare the two screenshots yourself, since QA only checks numbers (box position and size within 2px, text line count, fonts, empty or pass-through frames). Rasterizing is never an allowed fix: do not replace text, shapes or icons with images. The import is accepted when at most 10% of slides end up flagged.
+The loop each slide goes through: `deck_import` -> `deck_slide_view` -> `deck_patch` (or re-import) for at most 3 rounds -> `deck_mark` -> `deck_report`. Compare the two screenshots yourself, since QA only checks numbers (box position and size within 2px, text line count, fonts, empty or pass-through frames). `deck_slide_view` and `deck_patch` return at most 50 issues (and, for the view, 50 nodes) followed by a "+N more" marker. Rasterizing is never an allowed fix: do not replace text, shapes or icons with images. The import is accepted when at most 10% of slides end up flagged.
 
 ---
 

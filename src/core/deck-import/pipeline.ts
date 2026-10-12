@@ -35,7 +35,10 @@ export interface PipelineEnv {
 	session: DeckSession;
 	figma: FigmaDeck;
 	srcDir: string;
-	workDir: string;
+	/** Per-zip image cache, shared by the zip's decks. */
+	cacheDir: string;
+	/** Per-deck dir: `ir/` and `shots/` go here. */
+	deckDir: string;
 	/** Called with `[enterSlideId?, slideId]` as soon as the slide exists, before anything after it can fail. */
 	onBuilt?: (figmaIds: string[]) => void;
 }
@@ -48,23 +51,34 @@ export interface Built {
 	qa: QaResult | null;
 }
 
-// ---- stored IR (<workDir>/ir/<n>.json) ----------------------------------------------------------
+// ---- stored IR (<deckDir>/ir/<n>.json) ----------------------------------------------------------
 
-const builtFile = (workDir: string, n: number) =>
-	path.join(workDir, "ir", `${n}.json`);
+const builtFile = (deckDir: string, n: number) =>
+	path.join(deckDir, "ir", `${n}.json`);
 
-export function saveBuilt(workDir: string, n: number, b: Built): void {
-	const file = builtFile(workDir, n);
+/** Temp file + rename, so a crash mid-write never leaves a truncated file. */
+export function saveBuilt(deckDir: string, n: number, b: Built): void {
+	const file = builtFile(deckDir, n);
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, JSON.stringify(b));
+	const tmp = `${file}.tmp`;
+	fs.writeFileSync(tmp, JSON.stringify(b));
+	fs.renameSync(tmp, file);
 }
 
-export function loadBuilt(workDir: string, n: number): Built | null {
+/** null when the slide has no stored import, or the file is unreadable JSON (re-import rewrites it). */
+export function loadBuilt(deckDir: string, n: number): Built | null {
+	let text: string;
 	try {
-		return JSON.parse(fs.readFileSync(builtFile(workDir, n), "utf8")) as Built;
+		text = fs.readFileSync(builtFile(deckDir, n), "utf8");
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
 		throw e;
+	}
+	try {
+		return JSON.parse(text) as Built;
+	} catch (e) {
+		logger.warn({ slide: n, error: errMsg(e) }, "stored IR is unparsable");
+		return null;
 	}
 }
 
@@ -321,7 +335,7 @@ async function recordGif(
 
 /**
  * Imports slide `n` (1-based): capture -> normalize -> entrance -> assets / GIFs -> upload -> build
- * (replacing `replaceIds`) -> screenshots in `<workDir>/shots` -> dump -> QA. Persists the IR for
+ * (replacing `replaceIds`) -> screenshots in `<deckDir>/shots` -> dump -> QA. Persists the IR for
  * view / patch. `flags` is everything the report should say about the slide.
  */
 export async function importSlide(
@@ -329,7 +343,7 @@ export async function importSlide(
 	n: number,
 	replaceIds?: string[],
 ): Promise<{ figmaIds: string[]; flags: string[]; qa: QaResult }> {
-	const { session, figma, workDir } = env;
+	const { session, figma, deckDir } = env;
 	const index = n - 1;
 	const flags = new Set<string>();
 
@@ -341,7 +355,7 @@ export async function importSlide(
 	const ctx: Ctx = {
 		raw: new Map(nodes.map((r) => [r.id, r])),
 		srcDir: env.srcDir,
-		cacheDir: path.join(workDir, "cache"),
+		cacheDir: env.cacheDir,
 		figma,
 		hashes: new Map(),
 		flags,
@@ -367,22 +381,22 @@ export async function importSlide(
 			flags.add(`image-missing:${short(node.gifKey)}`);
 	});
 
-	const prev = loadBuilt(workDir, n);
+	const prev = loadBuilt(deckDir, n);
 	const built = await figma.buildSlide(ir, ctx.hashes, replaceIds);
 	const figmaIds = [built.enterSlideId, built.slideId].filter(
 		(id): id is string => !!id,
 	);
 	const stored = { ir, expected: [...expected] };
-	saveBuilt(workDir, n, { ...stored, qa: null });
+	saveBuilt(deckDir, n, { ...stored, qa: null });
 	env.onBuilt?.(figmaIds);
 	for (const w of built.warnings) flags.add(w);
 
-	const shots = path.join(workDir, "shots");
+	const shots = path.join(deckDir, "shots");
 	fs.mkdirSync(shots, { recursive: true });
 	await session.screenshot(index, path.join(shots, `${n}-html.png`));
 	await figma.screenshot(built.slideId, path.join(shots, `${n}-figma.png`));
 	const qa = checkSlide(ir, await figma.dump(built.slideId), expected);
-	saveBuilt(workDir, n, { ...stored, qa });
+	saveBuilt(deckDir, n, { ...stored, qa });
 	for (const f of fixedFlags(prev?.qa, qa)) flags.add(f);
 	return { figmaIds, flags: [...flags], qa };
 }
@@ -392,16 +406,16 @@ export async function importSlide(
 /** Dumps the slide from Figma and checks it against the stored IR; the result is stored too. */
 export async function recheck(
 	figma: FigmaDeck,
-	workDir: string,
+	deckDir: string,
 	n: number,
 	slideId: string,
 ): Promise<{ built: Built; dump: FigmaDumpNode; qa: QaResult }> {
-	const built = loadBuilt(workDir, n);
+	const built = loadBuilt(deckDir, n);
 	if (!built)
 		throw new Error(`Slide ${n} has no stored import. Run deck_import first.`);
 	const dump = await figma.dump(slideId);
 	const qa = checkSlide(built.ir, dump, new Set(built.expected));
-	saveBuilt(workDir, n, { ...built, qa });
+	saveBuilt(deckDir, n, { ...built, qa });
 	return { built, dump, qa };
 }
 
