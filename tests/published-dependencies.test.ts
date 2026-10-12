@@ -26,6 +26,7 @@ const dependencies = new Set(Object.keys(pkg.dependencies ?? {}));
 /** Loaded by a string name at runtime, which no import scan can see */
 const LOADED_BY_NAME = new Set([
 	"pino-pretty", // pino transport target in src/core/logger.ts (TTY mode)
+	"lucide-static", // icon SVGs read from disk via require.resolve in src/core/deck-import/assets.ts
 ]);
 
 /** Used only by the Cloudflare Worker entry (src/index.ts), built from this repo */
