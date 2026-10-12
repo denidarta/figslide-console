@@ -1,6 +1,7 @@
 import {
 	parseBackground,
 	parseColor,
+	parseColorRaw,
 	parseRadii,
 	parseShadows,
 } from "./css.js";
@@ -8,6 +9,7 @@ import type {
 	Effect,
 	NodeIR,
 	RawNode,
+	RGBA,
 	SlideIR,
 	StrokeIR,
 	TextRun,
@@ -23,9 +25,19 @@ function backdropBlur(s: Style): number {
 	return m ? Number.parseFloat(m[1]) * 2 : 0;
 }
 
+/** True for a matrix with a rotation or skew part (b or c set); translate and scale draw correctly. */
+function rotates(transform: string | undefined): boolean {
+	const m = /^matrix(3d)?\(([^)]*)\)$/.exec((transform ?? "").trim());
+	if (!m) return false;
+	const v = m[2].split(",").map((x) => Number.parseFloat(x));
+	const [b, c] = m[1] ? [v[1], v[4]] : [v[1], v[2]]; // matrix3d is column-major: m12, m21
+	return Math.abs(b) > 1e-6 || Math.abs(c) > 1e-6;
+}
+
 /** Features the IR cannot carry, so the report can name them. */
 function flagsOf(s: Style): string[] {
 	const f: string[] = [];
+	if (rotates(s.transform)) f.push("unsupported:transform-rotate");
 	if (!isNone(s.clipPath)) f.push("unsupported:clip-path");
 	if (!isNone(s.maskImage)) f.push("unsupported:mask-image");
 	if (s.mixBlendMode && s.mixBlendMode !== "normal")
@@ -57,6 +69,30 @@ function strokesOf(s: Style): StrokeIR | null {
 		dashed: /dashed|dotted/.test(s.borderStyle ?? ""),
 	};
 }
+
+/** Elements the walker keeps as leaves but the IR has no node for. */
+const UNSUPPORTED_LEAF = /^(canvas|video|iframe|object|embed|audio)$/;
+
+const clipsText = (s: Style) =>
+	/\btext\b/.test(`${s.backgroundClip ?? ""} ${s.webkitBackgroundClip ?? ""}`);
+
+const isTransparent = (css: string) => parseColorRaw(css)?.a === 0;
+
+/**
+ * What a background-clip:text element shows through its glyphs, as one solid colour: the first visible
+ * stop of its topmost gradient (Figma text takes a solid fill per run), else its background colour.
+ */
+function clipColor(s: Style): RGBA | null {
+	const paints = parseBackground(s.backgroundColor ?? "", s.backgroundImage ?? "");
+	const top = paints[paints.length - 1];
+	if (!top) return null;
+	return top.type === "SOLID"
+		? top.color
+		: (top.stops.find((x) => x.color.a > 0) ?? top.stops[0]).color;
+}
+
+const rgbaCss = (c: RGBA) =>
+	`rgba(${[c.r, c.g, c.b].map((v) => Math.round(v * 255)).join(", ")}, ${Math.round(c.a * 1000) / 1000})`;
 
 const ALIGN = {
 	left: "LEFT",
@@ -155,24 +191,53 @@ export function normalizeSlide(
 		else kids.set(n.parentId, [n]);
 	}
 
+	const byId = new Map(nodes.map((n) => [n.id, n]));
+	/** Nearest ancestor (not the node itself) that paints its background through the text. */
+	const clipAncestor = (n: RawNode): RawNode | undefined => {
+		for (let p = n.parentId ? byId.get(n.parentId) : undefined; p; p = p.parentId ? byId.get(p.parentId) : undefined)
+			if (clipsText(p.style)) return p;
+		return undefined;
+	};
+
+	const root = nodes.find((n) => n.parentId === null);
+	// Dropped silently otherwise: a visible ::before/::after has no node of its own to carry a flag.
+	const slideFlags = new Set(root ? flagsOf(root.style) : []);
+	for (const n of nodes)
+		if (n.pseudo && !n.hidden) slideFlags.add("unsupported:pseudo-element");
+
 	const build = (n: RawNode): NodeIR[] => {
 		// A loop owner is measured at t=0 and may look hidden (e.g. collapsed); it is still a gif.
 		if (n.hidden && !n.loop) return [];
 		const s = n.style;
 		const flags = flagsOf(s);
 		const { id, box } = n;
-		if (n.loop) return [{ kind: "gif", id, box, gifKey: id, flags }];
+		if (n.loop)
+			return [
+				{ kind: "gif", id, box, gifKey: id, radii: parseRadii(s, box), flags },
+			];
+		if (UNSUPPORTED_LEAF.test(n.tag)) slideFlags.add(`unsupported:${n.tag}`);
 
 		const opacity = Number.parseFloat(s.opacity ?? "1");
 		const alpha = Number.isNaN(opacity) ? 1 : opacity;
 		if (n.tag === "#text-block") {
 			if (!n.text) return [];
+			let runs = transformRuns(n.text.runs, s.textTransform);
+			// background-clip:text leaves the glyphs transparent and shows the background through them.
+			if (runs.some((r) => isTransparent(r.color)) && clipAncestor(n)) {
+				const c = clipColor((clipAncestor(n) as RawNode).style);
+				if (c) {
+					runs = runs.map((r) =>
+						isTransparent(r.color) ? { ...r, color: rgbaCss(c) } : r,
+					);
+					flags.push("approx:background-clip-text");
+				} else flags.push("unsupported:background-clip-text");
+			}
 			return [
 				{
 					kind: "text",
 					id,
 					box,
-					runs: transformRuns(n.text.runs, s.textTransform),
+					runs,
 					lineCount: n.text.lineCount,
 					align: ALIGN[s.textAlign as keyof typeof ALIGN] ?? "LEFT",
 					opacity: alpha,
@@ -213,10 +278,10 @@ export function normalizeSlide(
 		}
 
 		const children = (kids.get(id) ?? []).flatMap(build);
-		const fills = parseBackground(
-			s.backgroundColor ?? "",
-			s.backgroundImage ?? "",
-		);
+		// The background of a background-clip:text element shows only through its glyphs, not as a box.
+		const fills = clipsText(s)
+			? []
+			: parseBackground(s.backgroundColor ?? "", s.backgroundImage ?? "");
 		const strokes = strokesOf(s);
 		const effects: Effect[] = parseShadows(s.boxShadow ?? "");
 		const blur = backdropBlur(s);
@@ -250,7 +315,8 @@ export function normalizeSlide(
 		];
 	};
 
-	const root = nodes.find((n) => n.parentId === null);
+	// build() adds the unsupported-leaf flags as it goes, so run it before the flags are read.
+	const tree = root ? (kids.get(root.id) ?? []).flatMap(build) : [];
 	return {
 		index: meta.index,
 		name: meta.name,
@@ -262,7 +328,7 @@ export function normalizeSlide(
 			: [],
 		skipped: meta.skipped,
 		notes: meta.notes,
-		root: root ? (kids.get(root.id) ?? []).flatMap(build) : [],
-		flags: root ? flagsOf(root.style) : [],
+		root: tree,
+		flags: [...slideFlags],
 	};
 }

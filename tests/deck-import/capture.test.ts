@@ -243,6 +243,95 @@ describe("DeckSession (real Chrome)", () => {
 		}
 	});
 
+	describe("things the IR cannot draw are marked on the nodes", () => {
+		const INJECTED = `
+<style>
+#pe-box::before{content:"";position:absolute;left:0;top:0;width:50px;height:50px;background:#f0f}
+#pe-text::after{content:"\\2022";position:absolute;right:0;top:0}
+#pe-empty::before{content:"";position:absolute;left:0;top:0;width:50px;height:50px}
+#pe-clear::before{content:"";position:absolute;left:0;top:0;width:50px;height:50px;background:#f0f;opacity:0}
+#pe-none::before{content:none;background:#f0f}
+</style>
+<div style="position:absolute;left:100px;top:600px;font-size:60px;background:linear-gradient(90deg,#f00,#00f);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:#123456">Gradient</div>
+<div style="position:absolute;left:700px;top:600px;width:100px;height:50px;background:#0a0;transform:rotate(10deg)"></div>
+<div id="pe-box" style="position:absolute;left:900px;top:600px;width:100px;height:100px"></div>
+<div id="pe-text" style="position:absolute;left:1100px;top:600px;width:100px;height:100px"></div>
+<div id="pe-empty" style="position:absolute;left:1300px;top:600px;width:100px;height:100px"></div>
+<div id="pe-clear" style="position:absolute;left:1500px;top:600px;width:100px;height:100px"></div>
+<div id="pe-none" style="position:absolute;left:1700px;top:600px;width:100px;height:100px"></div>
+<canvas width="10" height="10" style="position:absolute;left:100px;top:800px;width:100px;height:100px"></canvas>`;
+		let nodes: RawNode[];
+		const at = (x: number, y = 600) =>
+			nodes.find(
+				(n) => Math.abs(n.box.x - x) < 1 && Math.abs(n.box.y - y) < 1,
+			);
+
+		beforeAll(async () => {
+			await session.page.evaluate((html) => {
+				const slide = document.querySelector("deck-stage")?.children[1];
+				const wrap = document.createElement("div");
+				wrap.id = "injected";
+				wrap.innerHTML = html;
+				slide?.appendChild(wrap);
+			}, INJECTED);
+			({ nodes } = await session.capture(1));
+		});
+		afterAll(async () => {
+			await session.page.evaluate(() =>
+				document.getElementById("injected")?.remove(),
+			);
+		});
+
+		it("exports background-clip so text filled by a gradient can be recognised", () => {
+			const gradient = at(100)?.style;
+			expect(gradient?.backgroundClip).toBe("text");
+			expect(gradient?.webkitBackgroundClip).toBe("text");
+			expect(gradient?.backgroundImage).toMatch(/^linear-gradient\(/);
+		});
+
+		it("reports the glyph fill, so -webkit-text-fill-color: transparent reads as transparent", () => {
+			const owner = at(100);
+			const block = nodes.find((n) => n.parentId === owner?.id);
+			expect(block?.text?.runs[0].color).toBe("rgba(0, 0, 0, 0)");
+		});
+
+		it("exports a rotation as a matrix with b and c set", () => {
+			const green = nodes.find(
+				(n) => n.style.backgroundColor === "rgb(0, 170, 0)",
+			);
+			expect(green?.style.transform).toMatch(
+				/^matrix\(0\.98\d*, 0\.17\d*, -0\.17\d*, 0\.98\d*/,
+			);
+		});
+
+		it("marks elements with a visible ::before / ::after, and only those", () => {
+			expect(at(900)?.pseudo).toBe(true); // painted box
+			expect(at(1100)?.pseudo).toBe(true); // text content
+			expect(at(1300)?.pseudo).toBeFalsy(); // empty and unpainted
+			expect(at(1500)?.pseudo).toBeFalsy(); // opacity 0
+			expect(at(1700)?.pseudo).toBeFalsy(); // content: none
+			expect(at(100)?.pseudo).toBeFalsy(); // no pseudo-elements at all
+		});
+
+		it("keeps a canvas as a node so normalize can flag it", () => {
+			expect(nodes.some((n) => n.tag === "canvas")).toBe(true);
+		});
+	});
+
+	it("dismisses alert() and confirm() dialogs instead of hanging the capture", async () => {
+		await session.page.evaluate(() => {
+			setTimeout(() => {
+				alert("deck says hi");
+				confirm("sure?");
+			}, 100);
+		});
+		const hung = new Promise<never>((_, reject) =>
+			setTimeout(() => reject(new Error("capture hung on a dialog")), 20_000),
+		);
+		const { nodes } = await Promise.race([session.capture(0), hung]);
+		expect(nodes.length).toBeGreaterThan(1);
+	});
+
 	it("serves only files under srcDir, to its own loopback origin", async () => {
 		const origin = new URL(session.page.url()).origin;
 		const get = (reqPath: string, host?: string) =>

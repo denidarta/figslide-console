@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { createChildLogger } from "../logger.js";
 import { loadImageBytes, lucideSvg } from "./assets.js";
 import type { DeckSession } from "./capture.js";
-import { parseColorRaw } from "./css.js";
+import { parseColorRaw, parseRadii } from "./css.js";
 import { buildEntrance } from "./entrance.js";
 import type { FigmaDeck } from "./figma.js";
 import { recordLoop } from "./gif.js";
@@ -323,7 +323,13 @@ async function recordGif(
 		const rec = await recordLoop(env.session, slideIndex, box, cycleMs);
 		if (rec.warnBig) ctx.flags.add(`gif-over-5mb:${n.id}`);
 		ctx.hashes.set(n.gifKey, await env.figma.uploadImage(n.gifKey, rec.bytes));
-		return { ...n, box }; // a new object: IR boxes alias the captured RawNode boxes
+		// A new box object (IR boxes alias the captured RawNode boxes); radii resolve against the measured
+		// box, since % radii of the t=0 box can be 0.
+		return {
+			...n,
+			box,
+			radii: parseRadii(ctx.raw.get(n.id)?.style ?? {}, box),
+		};
 	} catch (e) {
 		logger.warn({ id: n.id, error: errMsg(e) }, "loop gif failed");
 		ctx.flags.add(`gif-failed:${n.id}`);

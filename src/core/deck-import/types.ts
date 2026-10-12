@@ -14,6 +14,7 @@ export interface RawNode {
 	slot?: { placeholder: string; shape: string; src?: string };
 	loop?: boolean; // has infinite/JS-driven animation in subtree root
 	hidden?: boolean;
+	pseudo?: boolean; // a visible ::before / ::after the IR cannot carry
 }
 export interface TextRun {
 	chars: string;
@@ -86,7 +87,14 @@ export type NodeIR =
 			radii: [number, number, number, number];
 			flags: string[];
 	  }
-	| { kind: "gif"; id: string; box: Box; gifKey: string; flags: string[] };
+	| {
+			kind: "gif";
+			id: string;
+			box: Box;
+			gifKey: string;
+			radii: [number, number, number, number];
+			flags: string[];
+	  };
 export interface StrokeIR {
 	color: RGBA;
 	weights: [number, number, number, number];

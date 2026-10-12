@@ -429,6 +429,27 @@ describe("importSlide", () => {
 			expect(built().hashes.get("s0-n1")).toBe("hash:s0-n1");
 		});
 
+		it("keeps the loop owner's rounded corners on the gif, resolved against the measured box", async () => {
+			rawNodes = [
+				section(),
+				{
+					...owner(),
+					style: {
+						borderTopLeftRadius: "20px",
+						borderTopRightRadius: "50%",
+						borderBottomRightRadius: "0px",
+						borderBottomLeftRadius: "0px",
+					},
+				},
+				child(100.4),
+			];
+			await run();
+			const gif = built().ir.root[0] as { kind: string; radii: number[] };
+			expect(gif.kind).toBe("gif");
+			// the captured box is 0x0 (radii would clamp to 0); the measured one is 401x101, so 50% clamps to 50.5
+			expect(gif.radii).toEqual([20, 50.5, 0, 0]);
+		});
+
 		it("defaults the cycle to 3s without an infinite animation inside", async () => {
 			anims = [];
 			await run();

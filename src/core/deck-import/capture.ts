@@ -102,6 +102,10 @@ export class DeckSession {
 				...(executablePath ? { executablePath } : { channel: "chrome" }),
 			});
 			const page = await browser.newPage();
+			// A deck's alert()/confirm()/prompt() would block the page, and every evaluate with it, forever.
+			page.on("dialog", (d) => {
+				d.dismiss().catch(() => {});
+			});
 			// tsx/esbuild (keepNames) wraps named inner functions in __name(); the page has no such helper.
 			await page.evaluateOnNewDocument("globalThis.__name = (f) => f");
 			await page.setViewport({ ...SIZE, deviceScaleFactor: 1 });

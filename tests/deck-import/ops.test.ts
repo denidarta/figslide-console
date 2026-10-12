@@ -191,6 +191,23 @@ describe("buildOps", () => {
 		});
 	});
 
+	it("gives a gif the loop owner's corner radii", () => {
+		const [op] = buildOps(
+			slide([
+				{
+					kind: "gif",
+					id: "g",
+					box: box(0, 0, 70, 80),
+					gifKey: "k",
+					radii: [8, 4, 2, 0],
+					flags: [],
+				},
+			]),
+			new Map([["k", "H"]]),
+		);
+		expect(op.props.radii).toEqual([8, 4, 2, 0]);
+	});
+
 	it("emits a slot op with no fills", () => {
 		const ops = buildOps(
 			slide([

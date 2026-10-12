@@ -23,9 +23,12 @@ export function deckDirFor(zipPath: string, deckFile: string): string {
 	);
 }
 
-function isUnsafe(entry: string): boolean {
+/** Absolute, `..`, any colon (drive letters, NTFS streams), or not strictly inside `root` once resolved. */
+function isUnsafe(entry: string, root: string): boolean {
 	const p = entry.split('\\').join('/');
-	return p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.split('/').includes('..');
+	if (p.startsWith('/') || p.includes(':') || p.split('/').includes('..')) return true;
+	const dest = path.resolve(root, entry);
+	return !(dest.startsWith(root + path.sep) || (dest === root && p.endsWith('/')));
 }
 
 /** Extracts the zip to `<workDir>/src` and returns that path. Skips if already extracted from the same zip mtime. */
@@ -39,15 +42,16 @@ export async function extractZip(zipPath: string): Promise<string> {
 	if (stamp === mtime) return srcDir;
 
 	const entries = unzipSync(new Uint8Array(await fs.readFile(zipPath)));
+	const root = path.resolve(srcDir);
 	for (const name of Object.keys(entries)) {
-		if (isUnsafe(name)) throw new Error(`Unsafe path in zip: ${name}`);
+		if (isUnsafe(name, root)) throw new Error(`Unsafe path in zip: ${name}`);
 	}
 
 	await fs.rm(srcDir, { recursive: true, force: true });
 	await fs.mkdir(srcDir, { recursive: true });
 	for (const [name, data] of Object.entries(entries)) {
 		if (name.endsWith('/')) continue; // directory entry
-		const dest = path.join(srcDir, name);
+		const dest = path.resolve(root, name);
 		await fs.mkdir(path.dirname(dest), { recursive: true });
 		await fs.writeFile(dest, data);
 	}

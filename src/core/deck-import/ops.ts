@@ -233,7 +233,7 @@ export function buildOps(slide: SlideIR, hashes: Map<string, string>): Op[] {
 						push("image", "Loop", {
 							hash,
 							scaleMode: "FILL",
-							radii: [0, 0, 0, 0],
+							radii: n.radii,
 							opacity: 1,
 						});
 					break;

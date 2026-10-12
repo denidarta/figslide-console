@@ -200,7 +200,34 @@ describe("normalizeSlide", () => {
 			el("s0-n6", "s0-n1", {}, { svg: "<svg/>" }),
 		);
 		expect(root).toEqual([
-			{ kind: "gif", id: "s0-n1", box: BOX, gifKey: "s0-n1", flags: [] },
+			{
+				kind: "gif",
+				id: "s0-n1",
+				box: BOX,
+				gifKey: "s0-n1",
+				radii: [0, 0, 0, 0],
+				flags: [],
+			},
+		]);
+	});
+
+	it("carries the loop owner's corner radii into the gif", () => {
+		const root = only(
+			el(
+				"s0-n1",
+				"s0-n0",
+				{
+					borderTopLeftRadius: "24px",
+					borderTopRightRadius: "12px",
+					borderBottomRightRadius: "50%",
+					borderBottomLeftRadius: "0px",
+				},
+				{ loop: true },
+			),
+		);
+		// 50% of a 300x400 box, clamped to half the short side
+		expect(root).toMatchObject([
+			{ kind: "gif", radii: [24, 12, 150, 0] },
 		]);
 	});
 
@@ -393,6 +420,161 @@ describe("normalizeSlide", () => {
 		expect(norm().flags).toEqual([]);
 		const s = normalizeSlide([section({ filter: "blur(2px)" })], meta);
 		expect(s.flags).toEqual(["unsupported:filter"]);
+	});
+});
+
+describe("features that used to vanish silently", () => {
+	const flagsOfRoot = (...nodes: RawNode[]) => norm(...nodes);
+
+	it("flags a rotated or skewed element, but not a translated or scaled one", () => {
+		const flagged = (transform: string) =>
+			(
+				only(
+					el("s0-n1", "s0-n0", { backgroundColor: WHITE, transform }),
+				)[0] as { flags: string[] }
+			).flags;
+		expect(flagged("matrix(0.9848, 0.1736, -0.1736, 0.9848, 0, 0)")).toEqual([
+			"unsupported:transform-rotate",
+		]);
+		expect(flagged("matrix(1, 0, 0.3, 1, 0, 0)")).toEqual([
+			"unsupported:transform-rotate",
+		]); // skew
+		expect(
+			flagged(
+				"matrix3d(0.9848, 0.1736, 0, 0, -0.1736, 0.9848, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)",
+			),
+		).toEqual(["unsupported:transform-rotate"]);
+		expect(flagged("matrix(1, 0, 0, 1, 40, -10)")).toEqual([]);
+		expect(flagged("matrix(2, 0, 0, 0.5, 0, 0)")).toEqual([]);
+		expect(flagged("matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 0, 1)")).toEqual([]);
+		expect(flagged("none")).toEqual([]);
+	});
+
+	it("turns a pseudo-element mark into one slide flag, ignoring hidden nodes", () => {
+		const pseudo = { pseudo: true };
+		const s = flagsOfRoot(
+			el("s0-n1", "s0-n0", { backgroundColor: WHITE }, pseudo),
+			el("s0-n2", "s0-n0", {}, pseudo),
+			el("s0-n3", "s0-n0", {}, { ...pseudo, hidden: true }),
+		);
+		expect(s.flags).toEqual(["unsupported:pseudo-element"]);
+		// the marks do not change what is emitted
+		expect(s.root).toMatchObject([{ kind: "frame", id: "s0-n1", flags: [] }]);
+		expect(
+			flagsOfRoot(el("s0-n1", "s0-n0", {}, { pseudo: true, hidden: true })).flags,
+		).toEqual([]);
+		// a pseudo-element on the slide itself counts too
+		const onSlide = normalizeSlide([{ ...section(), pseudo: true }], meta);
+		expect(onSlide.flags).toEqual(["unsupported:pseudo-element"]);
+	});
+
+	it("flags canvas, video, iframe, object, embed and audio leaves on the slide", () => {
+		const tags = ["canvas", "video", "iframe", "object", "embed", "audio"];
+		const s = flagsOfRoot(
+			...tags.map((tag, i) => el(`s0-n${i + 1}`, "s0-n0", {}, { tag })),
+		);
+		expect(s.flags).toEqual(tags.map((t) => `unsupported:${t}`));
+		expect(s.root).toEqual([]); // still not drawn, but no longer silent
+	});
+
+	it("does not flag a hidden unsupported leaf or one recorded as a loop gif", () => {
+		const s = flagsOfRoot(
+			el("s0-n1", "s0-n0", {}, { tag: "video", hidden: true }),
+			el("s0-n2", "s0-n0", {}, { tag: "canvas", loop: true }),
+		);
+		expect(s.flags).toEqual([]);
+		expect(s.root).toMatchObject([{ kind: "gif", id: "s0-n2" }]);
+	});
+});
+
+describe("background-clip: text", () => {
+	const GRADIENT = "linear-gradient(90deg, rgb(255, 0, 0), rgb(0, 0, 255))";
+	const CLIP = {
+		backgroundImage: GRADIENT,
+		backgroundClip: "text",
+		webkitBackgroundClip: "text",
+	};
+	const transparent = (id: string, parentId: string, chars: string) => {
+		const t = tb(id, parentId, chars);
+		t.text = {
+			runs: [{ ...run(chars), color: "rgba(0, 0, 0, 0)" }],
+			lineCount: 1,
+		};
+		return t;
+	};
+
+	it("paints transparent text with the first gradient stop, drops the owner's box fill and flags it", () => {
+		const s = norm(
+			el("s0-n1", "s0-n0", CLIP),
+			transparent("s0-n2", "s0-n1", "Gradient"),
+		);
+		// the gradient only shows through the glyphs: no rectangle behind the text
+		expect(s.root).toHaveLength(1);
+		expect(s.root[0]).toMatchObject({
+			kind: "text",
+			id: "s0-n2",
+			runs: [{ chars: "Gradient", color: "rgba(255, 0, 0, 1)" }],
+			flags: ["approx:background-clip-text"],
+		});
+	});
+
+	it("takes the topmost gradient layer and skips transparent leading stops", () => {
+		const css =
+			"linear-gradient(90deg, rgba(0, 0, 0, 0), rgb(0, 0, 255)), linear-gradient(rgb(0, 128, 0), rgb(0, 100, 0))";
+		const root = only(
+			el("s0-n1", "s0-n0", { ...CLIP, backgroundImage: css }),
+			transparent("s0-n2", "s0-n1", "x"),
+		);
+		// CSS lists the top layer first: the one with the transparent leading stop
+		expect(root[0]).toMatchObject({
+			runs: [{ color: "rgba(0, 0, 255, 1)" }],
+		});
+	});
+
+	it("finds a clipping ancestor and uses a solid background colour when there is no gradient", () => {
+		const root = only(
+			el("s0-n1", "s0-n0", {
+				backgroundClip: "text",
+				backgroundColor: "rgb(10, 20, 30)",
+			}),
+			el("s0-n2", "s0-n1"),
+			transparent("s0-n3", "s0-n2", "x"),
+		);
+		expect(root[0]).toMatchObject({
+			kind: "text",
+			runs: [{ color: "rgba(10, 20, 30, 1)" }],
+			flags: ["approx:background-clip-text"],
+		});
+	});
+
+	it("leaves visible text alone, and does nothing without background-clip: text", () => {
+		const visible = only(
+			el("s0-n1", "s0-n0", CLIP),
+			tb("s0-n2", "s0-n1", "Solid"),
+		);
+		expect(visible).toMatchObject([
+			{ kind: "text", runs: [{ color: "rgb(0, 0, 0)" }], flags: [] },
+		]);
+		const plain = only(
+			el("s0-n1", "s0-n0", { backgroundImage: GRADIENT }),
+			transparent("s0-n2", "s0-n1", "Ghost"),
+		);
+		expect(plain).toMatchObject([
+			{ kind: "frame" },
+		]);
+		const ghost = (plain[0] as { children: NodeIR[] }).children[0];
+		expect(ghost).toMatchObject({ runs: [{ color: "rgba(0, 0, 0, 0)" }], flags: [] });
+	});
+
+	it("flags text it has no colour for instead of leaving it invisible silently", () => {
+		const root = only(
+			el("s0-n1", "s0-n0", { backgroundClip: "text" }),
+			transparent("s0-n2", "s0-n1", "x"),
+		);
+		expect(root[0]).toMatchObject({
+			runs: [{ color: "rgba(0, 0, 0, 0)" }],
+			flags: ["unsupported:background-clip-text"],
+		});
 	});
 });
 

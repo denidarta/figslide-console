@@ -65,6 +65,21 @@ describe('deck-import zip', () => {
 		await expect(extractZip(zipPath)).rejects.toThrow(/unsafe/i);
 	});
 
+	it('extractZip rejects entry names with a colon (drive letters, NTFS streams)', async () => {
+		for (const name of ['a:evil.txt', 'dir/file.txt:stream', 'C:x.txt']) {
+			fs.writeFileSync(zipPath, zipSync({ [name]: strToU8('x') }));
+			await expect(extractZip(zipPath)).rejects.toThrow(/unsafe/i);
+		}
+		expect(fs.existsSync(path.join(workDirFor(zipPath), 'src'))).toBe(false);
+	});
+
+	it('extractZip rejects an entry that resolves outside (or onto) the source dir, before writing anything', async () => {
+		// "." has no .. segment, no colon and no leading slash, but it is the source dir itself
+		fs.writeFileSync(zipPath, zipSync({ 'ok.txt': strToU8('x'), '.': strToU8('y') }));
+		await expect(extractZip(zipPath)).rejects.toThrow(/unsafe/i);
+		expect(fs.existsSync(path.join(workDirFor(zipPath), 'src', 'ok.txt'))).toBe(false);
+	});
+
 	it('listDecks lists root *.dc.html sorted, ignoring subfolders', async () => {
 		const src = await extractZip(zipPath);
 		expect(await listDecks(src)).toEqual([

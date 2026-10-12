@@ -241,6 +241,8 @@ export function walkSlide(slideIndex: number): PageWalk {
 	const STYLE_KEYS = [
 		"backgroundColor",
 		"backgroundImage",
+		"backgroundClip",
+		"webkitBackgroundClip",
 		"borderTopWidth",
 		"borderRightWidth",
 		"borderBottomWidth",
@@ -408,6 +410,34 @@ export function walkSlide(slideIndex: number): PageWalk {
 				) > 0,
 		);
 
+	/** True when ::before or ::after of `el` draws something: content with text, or an empty box with a paint. */
+	const pseudoDraws = (el: Element): boolean =>
+		["::before", "::after"].some((which) => {
+			const ps = getComputedStyle(el, which);
+			const content = ps.content;
+			if (!content || content === "none" || content === "normal") return false;
+			if (
+				ps.display === "none" ||
+				ps.visibility === "hidden" ||
+				ps.opacity === "0"
+			)
+				return false;
+			if (content !== '""' && content !== "''") return true;
+			const side = (k: string) =>
+				Number.parseFloat((ps as unknown as Record<string, string>)[k]);
+			return (
+				side("width") !== 0 &&
+				side("height") !== 0 &&
+				(ps.backgroundImage !== "none" ||
+					ps.boxShadow !== "none" ||
+					(!/^rgba\(.*, 0\)$/.test(ps.backgroundColor) &&
+						ps.backgroundColor !== "transparent") ||
+					["Top", "Right", "Bottom", "Left"].some(
+						(s) => side(`border${s}Width`) > 0,
+					))
+			);
+		});
+
 	const nodes: RawNode[] = [];
 	const idOf = new Map<Element, string>();
 	let seq = 0;
@@ -439,7 +469,9 @@ export function walkSlide(slideIndex: number): PageWalk {
 			fontWeight: Number.parseInt(cs.fontWeight, 10) || 400,
 			fontStyle: cs.fontStyle,
 			fontSize: Number.parseFloat(cs.fontSize),
-			color: fixColors(cs.color),
+			// What actually paints the glyphs: -webkit-text-fill-color (= color unless set, e.g. transparent
+			// for background-clip:text gradient text).
+			color: fixColors(cs.webkitTextFillColor || cs.color),
 			letterSpacing: cs.letterSpacing,
 			lineHeight: cs.lineHeight,
 			textDecoration: deco,
@@ -632,6 +664,7 @@ export function walkSlide(slideIndex: number): PageWalk {
 		}
 		const selfHidden =
 			cs.visibility === "hidden" || cs.visibility === "collapse";
+		if (pseudoDraws(el)) node.pseudo = true;
 
 		let anyVisible = false;
 		if (isLeaf(el)) {
