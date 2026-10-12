@@ -26,6 +26,8 @@ module.exports = {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     // puppeteer-core is ESM-only; load it through Node's native require() instead of Jest's CJS loader
     '^puppeteer-core$': '<rootDir>/tests/__mocks__/puppeteer-core.js',
+    // gifenc is a CJS bundle that Node ESM only exposes through its default import
+    '^gifenc$': '<rootDir>/tests/__mocks__/gifenc.js',
     '^cloudflare:workers$': '<rootDir>/tests/__mocks__/cloudflare-workers.js',
   },
   // Required: WebSocket event listeners in tests can keep Node alive after tests complete

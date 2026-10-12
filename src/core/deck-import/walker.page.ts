@@ -723,3 +723,45 @@ export function walkSlide(slideIndex: number): PageWalk {
 	}));
 	return { nodes, anims };
 }
+
+/**
+ * Pauses every animation (loop recording drives time itself). Returns the slide's page offset and
+ * whether an infinite CSS/Web animation overlaps `box` (slide-relative) and can therefore be
+ * seeked; otherwise the region is a JS/SMIL loop that has to be recorded in real time.
+ */
+export function pauseForRecording(
+	slideIndex: number,
+	box: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; seekable: boolean } {
+	const deck = document.querySelector("deck-stage") as HTMLElement;
+	const section = Array.from(deck.children).filter(
+		(e) => !/^(TEMPLATE|SCRIPT|STYLE)$/.test(e.tagName),
+	)[slideIndex] as HTMLElement;
+	if (!section) throw new Error(`No slide ${slideIndex}`);
+	const { left, top } = section.getBoundingClientRect();
+
+	const anims = document.getAnimations();
+	for (const a of anims) a.pause();
+	const seekable = anims.some((a) => {
+		if (Number.isFinite(a.effect?.getTiming().iterations)) return false;
+		const r = (a.effect as KeyframeEffect).target?.getBoundingClientRect();
+		return (
+			!!r &&
+			r.left < left + box.x + box.w &&
+			r.right > left + box.x &&
+			r.top < top + box.y + box.h &&
+			r.bottom > top + box.y
+		);
+	});
+	return { x: left, y: top, seekable };
+}
+
+/** Puts every infinite animation `t` ms into its steady-state cycle (a start delay is skipped). */
+export function seekLoops(t: number): void {
+	for (const a of document.getAnimations()) {
+		const timing = a.effect?.getTiming();
+		if (timing && !Number.isFinite(timing.iterations)) {
+			a.currentTime = Math.max(0, Number(timing.delay) || 0) + t;
+		}
+	}
+}
