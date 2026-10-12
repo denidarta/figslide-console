@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<script src="./image-slot.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/lucide-static@0.460.0/font/lucide.css">
+<style>@keyframes npCard{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}@keyframes mdFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-16px)}}@media (prefers-reduced-motion:no-preference){[data-deck-active] [data-np]{animation:npCard .6s cubic-bezier(.65,0,.35,1) 1s both}}</style>
+</helmet>
+<x-import component-from-global-scope="deck-stage" from="./deck-stage.js" width="1920" height="1080" hint-size="100%,100%" data-uneditable="">
+<section data-label="00 Title" style="background:#eef3fb;font-family:'Geist',Helvetica,sans-serif;color:#1c2330;position:relative">
+<div data-np="" style="position:absolute;left:200px;top:200px;width:900px;background:#ffffff;border-radius:24px;box-shadow:0 12px 40px oklch(0.4 0.15 260 / 0.25);padding:40px">
+<div>
+<h1 style="margin:0;font-family:'Geist',Helvetica,sans-serif;font-weight:600;font-size:72px;line-height:1.1;color:oklch(0.25 0.05 260)">Hello <b style="font-weight:700">bold</b> world</h1>
+</div>
+</div>
+</section>
+<section data-label="01 Mixed" style="background:linear-gradient(135deg, oklch(0.98 0.02 250), lab(96 2 -4));font-family:'Geist',Helvetica,sans-serif;color:#1c2330;position:relative">
+<img src="assets/dot.png" alt="dot" style="position:absolute;left:100px;top:100px;width:120px;height:120px;object-fit:cover">
+<svg viewBox="0 0 100 100" style="position:absolute;left:300px;top:100px;width:120px;height:120px"><circle cx="50" cy="50" r="40" fill="#0a6cff"/></svg>
+<i class="icon-phone" style="position:absolute;left:500px;top:100px;font-size:48px;color:#0a6cff;line-height:1"></i>
+<image-slot placeholder="Photo: test" shape="rect" style="position:absolute;left:700px;top:100px;width:300px;height:200px;display:block"></image-slot>
+<div id="gone" style="display:none;position:absolute;left:100px;top:400px;width:200px;height:100px;background:#f00">gone</div>
+<div id="far" style="position:absolute;left:2400px;top:400px;width:200px;height:100px;background:#0f0">far</div>
+</section>
+<section data-label="02 Loop" style="background:#ffffff;font-family:'Geist',Helvetica,sans-serif;color:#1c2330;position:relative">
+<div id="floater" style="position:absolute;left:200px;top:300px;animation:mdFloat 2s infinite;font-size:48px">Floating text</div>
+<div id="static" style="position:absolute;left:800px;top:300px;font-size:48px">Static text</div>
+<div id="clock" style="position:absolute;left:200px;top:500px;font-size:48px"><span>0</span></div>
+<p id="para" style="position:absolute;left:800px;top:500px;font-size:36px;margin:0">Line&nbsp;one<br>  line   two</p>
+</section>
+</x-import>
+</x-dc>
+<script>var n=0;setInterval(function(){var c=document.getElementById("clock");if(c&&c.firstChild)c.firstChild.textContent=String(++n)},100)</script>
+<script type="application/json" id="speaker-notes">["Note one","Note two","Note three"]</script>
+</body>
+</html>

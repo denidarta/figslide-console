@@ -22,6 +22,8 @@ module.exports = {
     // resolve-package-root uses import.meta.url (ESM-only); mock with __dirname for CJS/Jest
     '/resolve-package-root\\.js$': '<rootDir>/tests/__mocks__/resolve-package-root.js',
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    // puppeteer-core is ESM-only; load it through Node's native require() instead of Jest's CJS loader
+    '^puppeteer-core$': '<rootDir>/tests/__mocks__/puppeteer-core.js',
     '^cloudflare:workers$': '<rootDir>/tests/__mocks__/cloudflare-workers.js',
   },
   // Required: WebSocket event listeners in tests can keep Node alive after tests complete
