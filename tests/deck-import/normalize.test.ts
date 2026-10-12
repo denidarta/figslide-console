@@ -1,4 +1,4 @@
-import { normalizeSlide } from "../../src/core/deck-import/normalize.js";
+import { normalizeSlide, ownerMap } from "../../src/core/deck-import/normalize.js";
 import type { NodeIR, RawNode, TextRun } from "../../src/core/deck-import/types.js";
 
 // Computed-style defaults, as walker.page.ts emits them for an unstyled element.
@@ -393,5 +393,39 @@ describe("normalizeSlide", () => {
 		expect(norm().flags).toEqual([]);
 		const s = normalizeSlide([section({ filter: "blur(2px)" })], meta);
 		expect(s.flags).toEqual(["unsupported:filter"]);
+	});
+});
+
+describe("ownerMap", () => {
+	const nodes = [
+		section(),
+		el("s0-n1", "s0-n0", { backgroundColor: WHITE }), // emitted frame with direct text
+		tb("s0-n2", "s0-n1", "a"),
+		el("s0-n3", "s0-n1"), // hoisted wrapper
+		el("s0-n4", "s0-n3"), // hoisted wrapper
+		el("s0-n5", "s0-n4", { backgroundColor: WHITE }),
+		el("s0-n6", "s0-n0"), // hoisted, owns a text block
+		tb("s0-n7", "s0-n6", "b"),
+		el("s0-n8", "s0-n0", {}, { loop: true }),
+		el("s0-n9", "s0-n8", { backgroundColor: WHITE }),
+		el("s0-n10", "s0-n0", { backgroundColor: WHITE }, { hidden: true }),
+		el("s0-n11", "s0-n10", { backgroundColor: WHITE }),
+	];
+	const owner = ownerMap(nodes, normalizeSlide(nodes, meta).root);
+
+	it("maps an emitted node to itself, even when it has a text block", () => {
+		expect([owner("s0-n1"), owner("s0-n2"), owner("s0-n5")]).toEqual(["s0-n1", "s0-n2", "s0-n5"]);
+	});
+
+	it("maps a hoisted node to its own text block, else its nearest emitted ancestor", () => {
+		expect(owner("s0-n6")).toBe("s0-n7");
+		expect(owner("s0-n3")).toBe("s0-n1");
+		expect(owner("s0-n4")).toBe("s0-n1");
+	});
+
+	it("returns null for the slide root, unknown ids, gifs and hidden subtrees", () => {
+		expect(
+			["s0-n0", "nope", "s0-n8", "s0-n9", "s0-n10", "s0-n11"].map(owner),
+		).toEqual([null, null, null, null, null, null]);
 	});
 });

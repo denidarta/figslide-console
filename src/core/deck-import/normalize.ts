@@ -96,6 +96,43 @@ const OBJECT_FIT: Record<string, ["FILL" | "FIT", boolean]> = {
 	"scale-down": ["FIT", true],
 };
 
+/**
+ * Maps a raw node id to the id of the emitted IR node that stands for it: the node itself, else its own
+ * `#text-block` (a non-drawing element with direct text is hoisted away and only its text survives), else
+ * its nearest emitted ancestor. Null when nothing stands for it: no emitted ancestor (the slide root is
+ * not an IR node), a hidden subtree (dropped by normalizeSlide), or a gif (its animation is the gif).
+ */
+// ponytail: an animated non-drawing wrapper maps to its ancestor, so siblings animate with it; a wrapper's own text block is the only descendant considered.
+export function ownerMap(
+	nodes: RawNode[],
+	root: NodeIR[],
+): (rawId: string) => string | null {
+	const emitted = new Map<string, NodeIR>();
+	const collect = (list: NodeIR[]) => {
+		for (const n of list) {
+			emitted.set(n.id, n);
+			if (n.kind === "frame") collect(n.children);
+		}
+	};
+	collect(root);
+	const byId = new Map(nodes.map((n) => [n.id, n]));
+	const textOf = new Map<string, string>();
+	for (const n of nodes) {
+		if (n.tag === "#text-block" && n.parentId !== null && emitted.has(n.id))
+			textOf.set(n.parentId, n.id);
+	}
+	return (rawId) => {
+		let n = byId.get(rawId);
+		let hit = n && (emitted.get(n.id) ?? emitted.get(textOf.get(n.id) ?? ""));
+		while (n && !hit) {
+			if (n.hidden) return null;
+			n = n.parentId === null ? undefined : byId.get(n.parentId);
+			hit = n && emitted.get(n.id);
+		}
+		return hit && hit.kind !== "gif" ? hit.id : null;
+	};
+}
+
 export function normalizeSlide(
 	nodes: RawNode[],
 	meta: { index: number; name: string; skipped: boolean; notes: string },
