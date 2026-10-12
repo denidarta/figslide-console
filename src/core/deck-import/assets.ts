@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { PACKAGE_ROOT } from "../resolve-package-root.js";
+
+const FETCH_TIMEOUT_MS = 30_000;
 
 type ImageBytes = { bytes: Uint8Array; sha1: string; mime: string };
 
@@ -24,6 +26,12 @@ function sniffMime(b: Uint8Array): string {
 	) {
 		throw new Error("unsupported image type webp");
 	}
+	// SVG isn't a createImage type; report it so the caller can build vector nodes instead.
+	if (
+		/^\s*<(?:svg\b|\?xml\b)/i.test(new TextDecoder().decode(b.subarray(0, 512)))
+	) {
+		return "image/svg+xml";
+	}
 	throw new Error("unsupported image type (unrecognized bytes)");
 }
 
@@ -35,9 +43,15 @@ function decodeDataUri(src: string): Uint8Array {
 	const comma = src.indexOf(",");
 	if (comma < 0) throw new Error("malformed data URI");
 	const payload = src.slice(comma + 1);
-	return /;base64$/i.test(src.slice(0, comma))
-		? Buffer.from(payload, "base64")
-		: Buffer.from(decodeURIComponent(payload), "latin1");
+	if (/;base64$/i.test(src.slice(0, comma)))
+		return Buffer.from(payload, "base64");
+	// Byte-wise: decodeURIComponent would treat %c3%a9 as one UTF-8 char and throw on %89.
+	return Buffer.from(
+		payload.replace(/%([0-9a-f]{2})/gi, (_, h) =>
+			String.fromCharCode(Number.parseInt(h, 16)),
+		),
+		"latin1",
+	);
 }
 
 function resolveInside(src: string, srcDir: string): string {
@@ -67,11 +81,28 @@ async function fetchCached(url: string, cacheDir: string): Promise<Uint8Array> {
 	try {
 		return await fs.readFile(file);
 	} catch {}
-	const res = await fetch(url);
-	if (!res.ok) throw new Error(`fetch ${url} failed: ${res.status}`);
-	const bytes = new Uint8Array(await res.arrayBuffer());
+	let bytes: Uint8Array;
+	try {
+		const res = await fetch(url, {
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		});
+		if (!res.ok) throw new Error(String(res.status));
+		bytes = new Uint8Array(await res.arrayBuffer());
+	} catch (e) {
+		throw new Error(
+			`fetch ${url} failed: ${e instanceof Error ? e.message : e}`,
+		);
+	}
+	sniffMime(bytes); // don't cache a 200 HTML error page as if it were an image
 	await fs.mkdir(cacheDir, { recursive: true });
-	await fs.writeFile(file, bytes);
+	const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+	try {
+		await fs.writeFile(tmp, bytes);
+		await fs.rename(tmp, file);
+	} catch (e) {
+		await fs.rm(tmp, { force: true });
+		throw e;
+	}
 	return bytes;
 }
 

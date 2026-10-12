@@ -136,6 +136,88 @@ describe("loadImageBytes", () => {
 			false,
 		);
 	});
+
+	it("decodes percent-encoded data URIs byte-wise, including bytes >= 0x80", async () => {
+		const pct = (b: Uint8Array) =>
+			[...b].map((v) => `%${v.toString(16).padStart(2, "0")}`).join("");
+		const r = await loadImageBytes(
+			`data:image/png,${pct(DOT)}`,
+			MINI,
+			cacheDir,
+		);
+		expect(Buffer.from(r.bytes).equals(DOT)).toBe(true);
+		expect(r.mime).toBe("image/png");
+		expect(r.sha1).toBe(sha1(DOT));
+		// %c3%a9 must stay two bytes (not collapse to one UTF-8 char), %89 must not throw
+		const mixed = await loadImageBytes(
+			"data:image/gif,GIF89a%c3%a9%89",
+			MINI,
+			cacheDir,
+		);
+		expect([...mixed.bytes.slice(6)]).toEqual([0xc3, 0xa9, 0x89]);
+	});
+
+	it("does not cache a 200 non-image body and leaves no temp files", async () => {
+		const url = "https://images.example.com/oops";
+		jest
+			.spyOn(global, "fetch")
+			.mockResolvedValue(
+				new Response("<!doctype html><html>blocked</html>", { status: 200 }),
+			);
+		await expect(loadImageBytes(url, MINI, cacheDir)).rejects.toThrow(
+			/unsupported image type/,
+		);
+		expect(fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir) : []).toEqual([]);
+	});
+
+	it("writes the cache atomically (only the final file remains)", async () => {
+		jest
+			.spyOn(global, "fetch")
+			.mockResolvedValue(new Response(new Uint8Array(DOT), { status: 200 }));
+		const url = "https://images.example.com/b.png";
+		await loadImageBytes(url, MINI, cacheDir);
+		expect(fs.readdirSync(cacheDir)).toEqual([sha1(Buffer.from(url))]);
+	});
+
+	it("passes a timeout signal and names the URL when fetch fails", async () => {
+		const url = "https://images.example.com/slow.png";
+		const fetchMock = jest
+			.spyOn(global, "fetch")
+			.mockRejectedValue(new Error("The operation was aborted due to timeout"));
+		await expect(loadImageBytes(url, MINI, cacheDir)).rejects.toThrow(url);
+		const init = fetchMock.mock.calls[0][1] as RequestInit;
+		expect(init.signal).toBeInstanceOf(AbortSignal);
+	});
+
+	it("returns image/svg+xml for svg files and data URIs", async () => {
+		const dir = path.join(tmp, "src");
+		fs.mkdirSync(dir);
+		const svg =
+			'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>';
+		fs.writeFileSync(path.join(dir, "logo.svg"), svg);
+		fs.writeFileSync(path.join(dir, "x.svg"), `﻿  <?xml version="1.0"?>${svg}`);
+
+		const file = await loadImageBytes("logo.svg", dir, cacheDir);
+		expect(file.mime).toBe("image/svg+xml");
+		expect(Buffer.from(file.bytes).toString("utf8")).toBe(svg);
+		expect(file.sha1).toBe(sha1(Buffer.from(svg)));
+
+		const xml = await loadImageBytes("x.svg", dir, cacheDir);
+		expect(xml.mime).toBe("image/svg+xml");
+
+		const b64 = await loadImageBytes(
+			`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
+			dir,
+			cacheDir,
+		);
+		expect(b64.mime).toBe("image/svg+xml");
+		const pct = await loadImageBytes(
+			`data:image/svg+xml,${svg.replace("<", "%3C").replace(">", "%3E")}`,
+			dir,
+			cacheDir,
+		);
+		expect(pct.mime).toBe("image/svg+xml");
+	});
 });
 
 describe("lucideSvg", () => {
