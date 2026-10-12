@@ -278,6 +278,59 @@ describe("FigmaDeck", () => {
 		]);
 	});
 
+	it("returns the runtime's patch warnings", async () => {
+		const sb = new Sandbox();
+		sb.fake.addSlide("Blank");
+		const deck = new FigmaDeck(connectorFor(sb));
+		const { slideId } = await deck.buildSlide(
+			slide({
+				root: [
+					{
+						kind: "text",
+						id: "s0-n9",
+						box: { x: 0, y: 0, w: 200, h: 40 },
+						runs: [
+							{
+								chars: "Hi",
+								fontFamily: "Geist",
+								fontWeight: 400,
+								fontStyle: "normal",
+								fontSize: 20,
+								color: "rgb(0, 0, 0)",
+								letterSpacing: "normal",
+								lineHeight: "24px",
+								textDecoration: "none",
+							},
+						],
+						lineCount: 1,
+						align: "LEFT",
+						opacity: 1,
+						flags: [],
+					},
+				],
+			}),
+			new Map(),
+		);
+		const t = sb.fake.nodes.get(slideId)?.children[0] as FNode;
+		const { warnings } = await deck.patch(t.id, {
+			text: "Hi",
+			runs: [
+				{
+					start: 0,
+					end: 2,
+					family: "Nope",
+					style: "Bold",
+					fontSize: 20,
+					fills: [],
+					letterSpacing: { unit: "PERCENT", value: 0 },
+					lineHeight: { unit: "PIXELS", value: 24 },
+					decoration: "NONE",
+				},
+			],
+		});
+		expect(warnings).toEqual(["font-fallback:Nope|Bold->Inter Bold"]);
+	});
+
 	it("patches a node", async () => {
 		const sb = new Sandbox();
 		sb.fake.addSlide("Blank");
@@ -287,7 +340,7 @@ describe("FigmaDeck", () => {
 			new Map([["logo.png", "H"]]),
 		);
 		const f = sb.fake.nodes.get(slideId)?.children[0] as FNode;
-		await deck.patch(f.id, { x: 99 });
+		expect(await deck.patch(f.id, { x: 99 })).toEqual({ warnings: [] });
 		expect(f.x).toBe(99);
 	});
 

@@ -105,7 +105,9 @@ function __deckPickStyle(styles, style) {
 
 // Resolves {family, style} to a font Figma has (one listAvailableFontsAsync per loader) and loads it.
 // Order: the family's own style (spelling-insensitive, else nearest weight), Inter's, then the plain
-// fallbacks. Any substitution is recorded as a warning.
+// fallbacks. Family names match case-insensitively (the list's spelling is used). A warning is recorded
+// only for a real substitution (other family or other weight/slant), not for a respelling such as
+// "SemiBold" -> "Semi Bold".
 function __deckFontLoader(warnings) {
 	var cache = {};
 	var listed = false;
@@ -118,8 +120,9 @@ function __deckFontLoader(warnings) {
 			byFamily = Object.create(null);
 			for (var i = 0; i < all.length; i++) {
 				var fn = all[i].fontName;
-				if (!byFamily[fn.family]) byFamily[fn.family] = [];
-				byFamily[fn.family].push(fn.style);
+				var low = fn.family.toLowerCase();
+				if (!byFamily[low]) byFamily[low] = { name: fn.family, styles: [] };
+				byFamily[low].styles.push(fn.style);
 			}
 		} catch (e) {
 			byFamily = null;
@@ -133,8 +136,9 @@ function __deckFontLoader(warnings) {
 		var by = await families();
 		var names = [f.family, "Inter"];
 		for (var n = 0; by && n < names.length; n++) {
-			var picked = by[names[n]] ? __deckPickStyle(by[names[n]], f.style) : null;
-			if (picked) tries.push({ family: names[n], style: picked });
+			var entry = by[names[n].toLowerCase()];
+			var picked = entry ? __deckPickStyle(entry.styles, f.style) : null;
+			if (picked) tries.push({ family: entry.name, style: picked });
 		}
 		tries.push(
 			f,
@@ -145,7 +149,10 @@ function __deckFontLoader(warnings) {
 		for (var i = 0; i < tries.length; i++) {
 			try {
 				await figma.loadFontAsync(tries[i]);
-				if (tries[i].family !== f.family || tries[i].style !== f.style)
+				if (
+					tries[i].family.toLowerCase() !== f.family.toLowerCase() ||
+					__deckStyleKey(tries[i].style) !== __deckStyleKey(f.style)
+				)
 					warnings.push("font-fallback:" + key + "->" + tries[i].family + " " + tries[i].style);
 				cache[key] = tries[i];
 				return tries[i];

@@ -144,7 +144,12 @@ export class FigmaDeck {
 		await fs.writeFile(outPath, Buffer.from(b64, "base64"));
 	}
 
-	async patch(nodeId: string, props: Record<string, unknown>): Promise<void> {
-		await this.run({ cmd: "patch", nodeId, props });
+	/** Applies Op-style props to one node; `warnings` lists font substitutions and the like. */
+	async patch(
+		nodeId: string,
+		props: Record<string, unknown>,
+	): Promise<{ warnings: string[] }> {
+		const res = await this.run({ cmd: "patch", nodeId, props });
+		return { warnings: res?.warnings ?? [] };
 	}
 }

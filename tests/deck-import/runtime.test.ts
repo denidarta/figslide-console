@@ -408,7 +408,7 @@ describe("runtime font resolution", () => {
 		};
 	}
 
-	it("maps canonical style names onto each family's own spelling", async () => {
+	it("maps canonical style names onto each family's own spelling without warning", async () => {
 		const r = await build([
 			run("Inter", "SemiBold", 0, 1),
 			run("Inter", "ExtraBold", 1, 2),
@@ -423,12 +423,34 @@ describe("runtime font resolution", () => {
 			{ family: "Inter", style: "Bold Italic" },
 			{ family: "Geist", style: "SemiBold" },
 		]);
-		expect(r.warnings).toEqual([
-			"font-fallback:Inter|SemiBold->Inter Semi Bold",
-			"font-fallback:Inter|ExtraBold->Inter Extra Bold",
-			"font-fallback:Inter|ExtraLight->Inter Extra Light",
-			"font-fallback:Inter|BoldItalic->Inter Bold Italic",
-		]); // Geist SemiBold is exact: no warning
+		// respelling is not a substitution: nothing degrades, so nothing is flagged
+		expect(r.warnings).toEqual([]);
+	});
+
+	it("matches family names case-insensitively using the installed spelling", async () => {
+		const r = await build([
+			run("geist", "SemiBold", 0, 1),
+			run("INTER", "SemiBold", 1, 2),
+			run("nope", "Bold", 2, 3),
+		]);
+		expect(r.fonts).toEqual([
+			{ family: "Geist", style: "SemiBold" },
+			{ family: "Inter", style: "Semi Bold" },
+			{ family: "Inter", style: "Bold" },
+		]);
+		// only the family that is really missing is a substitution
+		expect(r.warnings).toEqual(["font-fallback:nope|Bold->Inter Bold"]);
+	});
+
+	it("still warns when the weight or slant changes, even in the same family", async () => {
+		const { sb } = deckWithOneSlide();
+		sb.fake.availableFonts.push(
+			{ family: "Foo", style: "Regular" },
+			{ family: "Foo", style: "Bold" },
+		);
+		const r = await build([run("foo", "SemiBold", 0, 1)], sb);
+		expect(r.fonts).toEqual([{ family: "Foo", style: "Bold" }]);
+		expect(r.warnings).toEqual(["font-fallback:foo|SemiBold->Foo Bold"]);
 	});
 
 	it("takes the nearest weight of the same family before Inter", async () => {
