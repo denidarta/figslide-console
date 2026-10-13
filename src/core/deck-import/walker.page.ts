@@ -664,7 +664,8 @@ export function walkSlide(slideIndex: number): PageWalk {
 		}
 		const selfHidden =
 			cs.visibility === "hidden" || cs.visibility === "collapse";
-		if (pseudoDraws(el)) node.pseudo = true;
+		// Icon fonts draw their glyph via ::before; the icon is imported as a vector instead
+		if (!iconOf(el) && pseudoDraws(el)) node.pseudo = true;
 
 		let anyVisible = false;
 		if (isLeaf(el)) {
