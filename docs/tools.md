@@ -140,6 +140,31 @@ Slides tools are documented in the [Slides guide](/slides). MCP Apps (`figma_bro
 
 ---
 
+## 📥 Deck Import Tools (HTML deck to Figma Slides)
+
+Local Mode only. These tools import a Claude design-artifact `.zip` (a `*.dc.html` deck) into the open Figma Slides file as native layers: text stays text, shapes stay shapes, and only bitmap images and looping regions become images. They need the Desktop Bridge plugin running in a Slides file, Google Chrome (or `DECK_IMPORT_CHROME_PATH` pointing at a Chrome executable), and network access (web images, Google Fonts). Slide numbers are 1-based. Files go to `<zip dir>/<zip name>.import/`: `src/` (extracted zip) and `cache/` (downloaded images) are shared by the zip's decks, and each deck keeps `state.json`, `ir/`, `shots/` and `report.html` in `decks/<deck name>/`, so importing one deck never touches another's state. `zipPath` must be an absolute path to a `.zip`.
+
+| Tool | Purpose |
+|------|---------|
+| `deck_list` | List the decks in the zip with their slide counts |
+| `deck_import` | Import slides in batches of at most `limit` per call (default 8, max 20): default is the slides not yet passed or flagged, `slides: "7"` or `"1-10"` re-imports and replaces, `force` redoes all; screenshots both sides and runs QA. The response adds `remaining` (slides still to do) and `next` (a `slides` value for them) |
+| `deck_slide_view` | Return the HTML and Figma screenshots as images, plus the current QA result and an id/kind/box list of every import node |
+| `deck_patch` | Fix one node by `importId` with Figma-API-form props, re-check, and update the slide's state |
+| `deck_mark` | Record your visual verdict: `passed`, or `flagged` with a reason |
+| `deck_report` | Write `report.html` and return its path with the passed / flagged counts |
+
+Things to know before you start:
+
+- **Add one blank slide first.** Slides cannot create a slide in an empty deck, so the importer clones the deck's last slide. If the deck is empty, `deck_import` fails with "Add one blank slide to the deck, then retry". That blank slide stays at the front of the deck as a leftover; delete it yourself when the import is done.
+- **Two numbering schemes.** Slide parameters (`slides`, `slide`, state keys, report) are 1-based, but an `importId` is `s<0-based slide index>-n<k>`, so slide 3 holds ids like `s2-n14`. Use the ids from `deck_slide_view` and QA issues rather than computing them.
+- **Batches.** A long deck takes several `deck_import` calls (`limit`, default 8, max 20). `deck_mark` each finished slide `passed` or `flagged`: slides that are only `imported` are redone first by the next default call, so pass the response's `next` as `slides` to go straight to the rest. Each slide lists at most 20 flags, then `flagsMore`. If the rendered deck has a different slide count than the source scan, the response says so in `warnings` and uses the rendered count.
+- **Entrance animations.** A slide with entrances is a pair: the start-state copy named `<slide> · enter` and the slide itself (Smart Animate). `deck_patch` rebuilds the copy after every patch so the animation keeps starting from the current layout.
+- **Cost bounds for looping regions** (recorded as GIFs): one shared palette; a cycle needing more than 150 frames at 30fps drops to 15fps, and is cut at 10s with a `loop-truncated:<id>` flag; a region over a quarter of the slide is recorded at 1x with `gif-scale-1:<id>`. A GIF over 5MB gets `gif-over-5mb:<id>`.
+
+The loop each slide goes through: `deck_import` -> `deck_slide_view` -> `deck_patch` (or re-import) for at most 3 rounds -> `deck_mark` -> `deck_report`. Compare the two screenshots yourself, since QA only checks numbers (box position and size within 2px, text line count, fonts, empty or pass-through frames). `deck_slide_view` and `deck_patch` return at most 50 issues (and, for the view, 50 nodes) followed by a "+N more" marker. Rasterizing is never an allowed fix: do not replace text, shapes or icons with images. The import is accepted when at most 10% of slides end up flagged.
+
+---
+
 ## 🧭 Navigation & Status Tools
 
 ### `figma_navigate`
