@@ -10,6 +10,7 @@ import {
 	prepareDeck,
 	readSlideMeta,
 	settleSlide,
+	trackTimers,
 	walkSlide,
 } from "./walker.page.js";
 
@@ -99,6 +100,8 @@ export class DeckSession {
 			const executablePath = process.env.DECK_IMPORT_CHROME_PATH;
 			browser = await puppeteer.launch({
 				headless: true,
+				// Chrome refuses to start as root with its sandbox on (containers, CI).
+				...(process.getuid?.() === 0 ? { args: ["--no-sandbox"] } : {}),
 				...(executablePath ? { executablePath } : { channel: "chrome" }),
 			});
 			const page = await browser.newPage();
@@ -108,6 +111,7 @@ export class DeckSession {
 			});
 			// tsx/esbuild (keepNames) wraps named inner functions in __name(); the page has no such helper.
 			await page.evaluateOnNewDocument("globalThis.__name = (f) => f");
+			await page.evaluateOnNewDocument(trackTimers);
 			await page.setViewport({ ...SIZE, deviceScaleFactor: 1 });
 			await page.emulateMediaFeatures([
 				{ name: "prefers-reduced-motion", value: "no-preference" },

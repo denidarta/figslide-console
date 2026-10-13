@@ -193,7 +193,8 @@ export function registerDeckImportTools(
 					deckDir,
 				} = await openDeck(zipPath, deckFile);
 				const state = loadState(deckDir, zipPath, deckFile);
-				let total = listed;
+				// A count rendered by an earlier call wins, so its `next` and slide numbers stay valid.
+				let total = state.rendered ?? listed;
 				// Every slide is known from the start, so the report's flagged % uses the deck size.
 				const plan = () => {
 					for (let n = 1; n <= total; n++) state.slides[n] ??= blank();
@@ -223,10 +224,13 @@ export function registerDeckImportTools(
 				// The source scan can miscount (slides that are not top-level <section>s); the rendered deck wins.
 				const warnings: string[] = [];
 				const rendered = session.slideCount();
-				if (rendered !== total) {
+				if (rendered !== listed)
 					warnings.push(
-						`The deck renders ${rendered} slides but its source suggests ${total}; using ${rendered}.`,
+						`The deck renders ${rendered} slides but its source suggests ${listed}; using ${rendered}.`,
 					);
+				state.rendered = rendered;
+				saveState(deckDir, state);
+				if (rendered !== total) {
 					total = rendered;
 					for (const k of Object.keys(state.slides)) {
 						const n = Number(k);
@@ -434,6 +438,10 @@ export function registerDeckImportTools(
 							),
 							slideId,
 						];
+						// The copy is current again: an earlier failure no longer applies.
+						entry.flags = entry.flags.filter(
+							(f) => !f.startsWith("entrance-failed"),
+						);
 						saveState(deckDir, state);
 					} catch (e) {
 						warnings.push(
@@ -496,14 +504,15 @@ export function registerDeckImportTools(
 		},
 		async ({ zipPath, deck: deckFile, slide, status, reason }) => {
 			try {
-				const { total, deckDir } = await openDeck(zipPath, deckFile);
+				const { total: listed, deckDir } = await openDeck(zipPath, deckFile);
+				// loadState starts fresh for a missing file; that state is never saved from here.
+				const state = loadState(deckDir, zipPath, deckFile);
+				const total = state.rendered ?? listed;
 				if (slide > total)
 					return fail(
 						`Slide ${slide} is outside 1-${total}`,
 						"Slides are numbered from 1.",
 					);
-				// loadState starts fresh for a missing file; that state is never saved from here.
-				const state = loadState(deckDir, zipPath, deckFile);
 				const entry = state.slides[slide];
 				if (!entry)
 					return fail(`Slide ${slide} has no import state`, IMPORT_FIRST_HINT);

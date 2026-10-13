@@ -404,3 +404,112 @@ describe("checkSlide", () => {
 		);
 	});
 });
+
+describe("checkSlide paint numbers", () => {
+	const RED = { r: 1, g: 0, b: 0, a: 1 };
+	const painted = (over: Partial<Extract<NodeIR, { kind: "frame" }>> = {}): NodeIR => ({
+		...(frame("a", B10) as Extract<NodeIR, { kind: "frame" }>),
+		fills: [{ type: "SOLID", color: RED }],
+		strokes: { color: RED, weights: [2, 2, 2, 2], dashed: false },
+		radii: [8, 8, 8, 8],
+		effects: [{ type: "DROP_SHADOW", color: RED, x: 0, y: 4, blur: 12, spread: 0 }],
+		...over,
+	});
+	const faithful = (over: Partial<FigmaDumpNode> = {}) =>
+		root(
+			dn("a", "FRAME", B10, {
+				fills: [{ type: "SOLID", hasImage: false, color: RED }],
+				strokes: 1,
+				strokeWeights: [2, 2, 2, 2],
+				radii: [8, 8, 8, 8],
+				effects: 1,
+				effectList: [{ type: "DROP_SHADOW", x: 0, y: 4, radius: 12, spread: 0 }],
+				...over,
+			}),
+		);
+	const check = (dump: FigmaDumpNode, ir: NodeIR = painted()) =>
+		checkSlide(slide([ir]), dump);
+
+	it("passes matching fills, strokes, radii and effects", () => {
+		expect(check(faithful()).issues).toEqual([]);
+	});
+
+	it("fill: count, type and colour (alpha included)", () => {
+		expect(kinds(check(faithful({ fills: [] })).issues)).toEqual(["fill"]);
+		expect(
+			check(faithful({ fills: [{ type: "GRADIENT_LINEAR", hasImage: false }] }))
+				.issues[0].detail,
+		).toBe("fill 0: expected SOLID got GRADIENT_LINEAR");
+		const off = check(
+			faithful({ fills: [{ type: "SOLID", hasImage: false, color: { ...RED, a: 0.5 } }] }),
+		);
+		expect(off.issues[0]).toMatchObject({
+			kind: "fill",
+			detail: "fill 0: expected rgba(255,0,0,1) got rgba(255,0,0,0.5)",
+		});
+		// within tolerance
+		expect(
+			check(faithful({ fills: [{ type: "SOLID", hasImage: false, color: { ...RED, g: 0.01 } }] }))
+				.pass,
+		).toBe(true);
+	});
+
+	it("stroke: presence and per-side weights", () => {
+		expect(check(faithful({ strokes: 0 })).issues[0].detail).toBe("stroke missing");
+		expect(
+			check(faithful(), painted({ strokes: null })).issues[0].detail,
+		).toBe("unexpected stroke");
+		expect(check(faithful({ strokeWeights: [2, 2, 4, 2] })).issues[0]).toMatchObject({
+			kind: "stroke",
+			detail: "expected weights 2,2,2,2 got 2,2,4,2",
+		});
+	});
+
+	it("radius: per corner, on frames and images", () => {
+		expect(check(faithful({ radii: [8, 8, 0, 8] })).issues[0]).toMatchObject({
+			kind: "radius",
+			detail: "expected 8,8,8,8 got 8,8,0,8",
+		});
+		const img = checkSlide(
+			slide([{ ...(image("i", B10) as Extract<NodeIR, { kind: "image" }>), radii: [4, 4, 4, 4] }]),
+			root(dn("i", "RECTANGLE", B10, { fills: [IMG], radii: [0, 0, 0, 0] })),
+		);
+		expect(kinds(img.issues)).toEqual(["radius"]);
+	});
+
+	it("effect: count, type and geometry", () => {
+		expect(kinds(check(faithful({ effectList: [] })).issues)).toEqual(["effect"]);
+		expect(
+			check(faithful({ effectList: [{ type: "INNER_SHADOW", x: 0, y: 4, radius: 12, spread: 0 }] }))
+				.issues[0].detail,
+		).toBe("effect 0: expected DROP_SHADOW got INNER_SHADOW");
+		expect(
+			check(faithful({ effectList: [{ type: "DROP_SHADOW", x: 0, y: 4, radius: 6, spread: 0 }] }))
+				.issues[0].detail,
+		).toBe("effect 0 (DROP_SHADOW): expected 0,4,12,0 got 0,4,6,0");
+		const blur = painted({ effects: [{ type: "BACKGROUND_BLUR", radius: 20 }] });
+		expect(
+			check(faithful({ effectList: [{ type: "BACKGROUND_BLUR", x: 0, y: 0, radius: 20, spread: 0 }] }), blur)
+				.pass,
+		).toBe(true);
+	});
+
+	it("skips paint checks for a dump without paint numbers", () => {
+		// an older dump: counts only, and a placeholder fill
+		expect(check(root(dn("a", "FRAME", B10, { strokes: 0, effects: 0 }))).pass).toBe(
+			true,
+		);
+	});
+
+	it("lines: skipped for mixed line heights (the height is checked instead)", () => {
+		const mixed: NodeIR = {
+			...(text("t", box(0, 0, 100, 105.6), 2) as Extract<NodeIR, { kind: "text" }>),
+			lineHeights: [76.8, 28.8],
+		};
+		// the dump counts height / tallest line = 1
+		const dump = root(dtext("t", box(0, 0, 100, 105.6), 1));
+		expect(checkSlide(slide([mixed]), dump).pass).toBe(true);
+		const tooTall = root(dtext("t", box(0, 0, 100, 182.4), 2));
+		expect(kinds(checkSlide(slide([mixed]), tooTall).issues)).toEqual(["box"]);
+	});
+});

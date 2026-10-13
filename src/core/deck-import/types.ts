@@ -8,7 +8,13 @@ export interface RawNode {
 	box: Box; // slide-relative, unscaled
 	style: Record<string, string>; // computed style subset (see Task 3)
 	/** rotation: Figma degrees (counter-clockwise) for vertical writing-mode text, which is laid out horizontally then turned. */
-	text?: { runs: TextRun[]; lineCount: number; rotation?: number };
+	/** lineHeights: px per visual line, only when the lines differ (mixed font sizes). */
+	text?: {
+		runs: TextRun[];
+		lineCount: number;
+		rotation?: number;
+		lineHeights?: number[];
+	};
 	svg?: string; // outerHTML for inline <svg>
 	img?: { src: string; naturalW: number; naturalH: number; objectFit: string };
 	iconClass?: string; // e.g. "icon-phone" for Lucide font icons
@@ -27,6 +33,9 @@ export interface TextRun {
 	letterSpacing: string;
 	lineHeight: string;
 	textDecoration: string;
+	/** -webkit-text-stroke, only when it draws (width > 0). */
+	strokeWidth?: number;
+	strokeColor?: string;
 }
 export interface RawAnim {
 	nodeId: string;
@@ -59,6 +68,10 @@ export type NodeIR =
 			runs: TextRun[];
 			lineCount: number;
 			rotation?: number;
+			/** px per visual line when they differ; QA then checks the height instead of the line count. */
+			lineHeights?: number[];
+			/** -webkit-text-stroke (centred on the glyph outline, like Figma's CENTER stroke). */
+			stroke?: { color: RGBA; weight: number };
 			align: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
 			opacity: number;
 			flags: string[];
@@ -145,9 +158,21 @@ export interface FigmaDumpNode {
 	name: string;
 	box: Box;
 	visible: boolean;
-	fills: { type: string; hasImage: boolean }[];
+	/** color: a SOLID paint's colour, with the paint opacity as `a`. */
+	fills: { type: string; hasImage: boolean; color?: RGBA }[];
 	strokes: number;
+	/** [top, right, bottom, left] when the node has strokes. */
+	strokeWeights?: number[];
+	/** [topLeft, topRight, bottomRight, bottomLeft] when the node has corners. */
+	radii?: number[];
 	effects: number;
+	effectList?: {
+		type: string;
+		x: number;
+		y: number;
+		radius: number;
+		spread: number;
+	}[];
 	clips: boolean;
 	text?: { chars: string; lineCount: number; fonts: string[] };
 	children: FigmaDumpNode[];
@@ -172,7 +197,11 @@ export interface QaIssue {
 		| "box"
 		| "lines"
 		| "missing"
-		| "font";
+		| "font"
+		| "fill"
+		| "stroke"
+		| "radius"
+		| "effect";
 	importId: string | null;
 	figmaId: string;
 	detail: string;
@@ -185,6 +214,8 @@ export type SlideStatus = "pending" | "imported" | "passed" | "flagged";
 export interface ImportState {
 	zip: string;
 	deck: string;
+	/** Slides the deck renders, once deck_import has opened it; wins over the source count. */
+	rendered?: number;
 	/** Keys are 1-based slide numbers. */
 	slides: Record<
 		number,

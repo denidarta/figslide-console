@@ -245,6 +245,25 @@ describe("importSlide", () => {
 			expect(flags.some((f) => f.startsWith("icon:"))).toBe(false);
 		});
 
+		it("colours a boxed icon (background chip) with its own element's color", async () => {
+			rawNodes = [
+				section(),
+				node("s0-n1", "s0-n0", {
+					tag: "i",
+					iconClass: "icon-phone",
+					style: {
+						color: "rgb(255, 0, 0)",
+						backgroundColor: "rgb(238, 238, 238)",
+					},
+				}),
+			];
+			await run();
+			const [chip, v] = flatten(built().ir.root);
+			expect(chip).toMatchObject({ kind: "frame", id: "s0-n1" });
+			expect(v).toMatchObject({ kind: "vector", id: "s0-n1-c" });
+			expect((v as { svg: string }).svg).toContain("#ff0000");
+		});
+
 		it("drops an unknown icon and flags missing-icon", async () => {
 			rawNodes = [
 				section(),
@@ -330,6 +349,26 @@ describe("importSlide", () => {
 			expect(v.svg).toContain("#000000");
 			expect(v.box).toEqual({ x: 5, y: 6, w: 40, h: 40 });
 			expect(figma.uploadImage).not.toHaveBeenCalled();
+		});
+
+		it("hands Figma the <svg> element of an svg file that starts with a licence comment", async () => {
+			fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tmp, "src", "logo.svg"),
+				`<?xml version="1.0"?>\n<!-- ${"licence text ".repeat(60)}-->\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><path d="M0 0h2v2z"/></svg>`,
+			);
+			srcDir = path.join(tmp, "src");
+			rawNodes = [
+				section(),
+				node("s0-n1", "s0-n0", {
+					tag: "img",
+					img: { src: "logo.svg", naturalW: 2, naturalH: 2, objectFit: "contain" },
+				}),
+			];
+			await run();
+			const v = built().ir.root[0] as { kind: string; svg: string };
+			expect(v.kind).toBe("vector");
+			expect(v.svg.startsWith("<svg")).toBe(true);
 		});
 
 		it("drops an unreadable image and flags image-unsupported", async () => {

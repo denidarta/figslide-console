@@ -14,6 +14,64 @@ export interface PageWalk {
 	anims: PageAnim[];
 }
 
+/**
+ * Runs before any page script (evaluateOnNewDocument): records live setInterval timers and setTimeout
+ * chains (a timeout scheduled from inside a timeout callback) with their delays, so settleSlide can watch
+ * long enough to catch a JS loop slower than its default window.
+ */
+export function trackTimers(): void {
+	const w = window as unknown as Record<string, unknown> & {
+		__deckTimers?: Map<number, number>;
+	};
+	if (w.__deckTimers) return;
+	const live = new Map<number, number>(); // timer id -> delay ms
+	w.__deckTimers = live;
+	const native = {
+		setInterval: window.setInterval.bind(window),
+		clearInterval: window.clearInterval.bind(window),
+		setTimeout: window.setTimeout.bind(window),
+		clearTimeout: window.clearTimeout.bind(window),
+	};
+	let inTimeout = false;
+	const ms = (d: unknown) => Number(d) || 0;
+	w.setInterval = (fn: TimerHandler, delay?: number, ...args: unknown[]) => {
+		const id = native.setInterval(fn, delay, ...args);
+		live.set(id, ms(delay));
+		return id;
+	};
+	w.setTimeout = (fn: TimerHandler, delay?: number, ...args: unknown[]) => {
+		const chained = inTimeout;
+		let id = 0;
+		const run =
+			typeof fn === "function"
+				? (...a: unknown[]) => {
+						live.delete(id);
+						inTimeout = true;
+						try {
+							return (fn as (...x: unknown[]) => unknown)(...a);
+						} finally {
+							inTimeout = false;
+						}
+					}
+				: fn;
+		id = native.setTimeout(run, delay, ...args);
+		if (chained) live.set(id, ms(delay));
+		return id;
+	};
+	// Timer ids share one pool, so either clear works for both kinds.
+	const clear = (id?: number) => {
+		if (id !== undefined) live.delete(id);
+	};
+	w.clearInterval = (id?: number) => {
+		clear(id);
+		native.clearInterval(id);
+	};
+	w.clearTimeout = (id?: number) => {
+		clear(id);
+		native.clearTimeout(id);
+	};
+}
+
 /** True once deck-stage is defined and the runtime has rendered its slides. */
 export function deckReady(): boolean {
 	return (
@@ -81,7 +139,8 @@ export function readSlideMeta(slideIndex: number): {
 
 /**
  * Activates the slide, records its animations (before finishing them), drives it to its end
- * state, and watches 300ms for JS-driven mutation. Results are stashed on `window` for walkSlide.
+ * state, and watches for JS-driven mutation: 300ms, or one tick of the slowest live JS timer loop
+ * (trackTimers) up to 3s. Results are stashed on `window` for walkSlide.
  */
 export async function settleSlide(slideIndex: number): Promise<void> {
 	const frame = () =>
@@ -197,7 +256,12 @@ export async function settleSlide(slideIndex: number): Promise<void> {
 		characterData: true,
 		subtree: true,
 	});
-	await new Promise((r) => setTimeout(r, 300));
+	const timers = (window as unknown as { __deckTimers?: Map<number, number> })
+		.__deckTimers;
+	let watchMs = 300;
+	for (const d of timers?.values() ?? [])
+		if (d <= 3000) watchMs = Math.max(watchMs, d + 100);
+	await new Promise((r) => setTimeout(r, watchMs));
 	mo.disconnect();
 
 	(window as unknown as { __deckCapture: unknown }).__deckCapture = {
@@ -438,6 +502,177 @@ export function walkSlide(slideIndex: number): PageWalk {
 			);
 		});
 
+	// ---- inline svg: page CSS does not travel with outerHTML -----------------------------------------
+	const SVGNS = "http://www.w3.org/2000/svg";
+	// Inherited presentation properties with their initial values: written where they differ from the
+	// parent's (the copy inherits too), or on the root from the initial value.
+	const SVG_INHERITED: Record<string, string> = {
+		fill: "#000000",
+		"fill-opacity": "1",
+		"fill-rule": "nonzero",
+		stroke: "none",
+		"stroke-width": "1",
+		"stroke-opacity": "1",
+		"stroke-linecap": "butt",
+		"stroke-linejoin": "miter",
+		"stroke-dasharray": "none",
+		"stroke-dashoffset": "0",
+		"stroke-miterlimit": "4",
+		"font-family": "",
+		"font-size": "",
+		"font-weight": "400",
+		"font-style": "normal",
+		"text-anchor": "start",
+		visibility: "visible",
+	};
+	// Not inherited: written where they differ from the initial value.
+	const SVG_OWN: Record<string, string> = {
+		opacity: "1",
+		"stop-color": "#000000",
+		"stop-opacity": "1",
+	};
+	// A colour's alpha moves into its opacity property, so attributes stay plain #hex.
+	const SVG_ALPHA: Record<string, string> = {
+		"fill-opacity": "fill",
+		"stroke-opacity": "stroke",
+		"stop-opacity": "stop-color",
+	};
+	const SVG_PAINTED =
+		/^(svg|g|a|switch|path|rect|circle|ellipse|line|polyline|polygon|text|tspan|textPath|stop|image)$/;
+	const SVG_DEFS =
+		/^(defs|symbol|clipPath|mask|pattern|marker|linearGradient|radialGradient|filter)$/;
+	const splitColor = (css: string) => {
+		const m = /^rgba?\(([^)]*)\)$/.exec(css);
+		if (!m) return null;
+		const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number.parseFloat);
+		return {
+			hex: `#${p
+				.slice(0, 3)
+				.map((v) => Math.round(v).toString(16).padStart(2, "0"))
+				.join("")}`,
+			a: p.length > 3 ? p[3] : 1,
+		};
+	};
+	/** One property's value as it should be written: colours as #hex, opacities times the colour's alpha. */
+	const svgValue = (cs: CSSStyleDeclaration, prop: string): string => {
+		const raw = fixColors(cs.getPropertyValue(prop).trim());
+		const colorProp = SVG_ALPHA[prop];
+		if (colorProp) {
+			const c = splitColor(fixColors(cs.getPropertyValue(colorProp).trim()));
+			const o = Number.parseFloat(raw);
+			const v = (Number.isFinite(o) ? o : 1) * (c ? c.a : 1);
+			return String(Math.round(v * 1000) / 1000);
+		}
+		const c = splitColor(raw);
+		if (c) return c.hex;
+		const v = raw.replace(/url\("([^"]*)"\)/g, "url($1)");
+		return /^(stroke-width|stroke-dasharray|stroke-dashoffset|font-size)$/.test(
+			prop,
+		)
+			? v.replace(/px/g, "")
+			: v;
+	};
+	/** Writes `orig`'s computed presentation onto `out`; `parent` is the element it inherits from (null: the root). */
+	const paintSvg = (orig: Element, out: Element, parent: Element | null) => {
+		out.removeAttribute("style");
+		out.removeAttribute("class");
+		if (!SVG_PAINTED.test(orig.localName)) return;
+		const cs = getComputedStyle(orig);
+		const pcs = parent ? getComputedStyle(parent) : null;
+		for (const [p, initial] of Object.entries(SVG_INHERITED)) {
+			const v = svgValue(cs, p);
+			if (v && v !== (pcs ? svgValue(pcs, p) : initial)) out.setAttribute(p, v);
+		}
+		// The root's own opacity is the vector node's opacity already.
+		if (!parent) return;
+		for (const [p, initial] of Object.entries(SVG_OWN)) {
+			const v = svgValue(cs, p);
+			if (v && v !== initial) out.setAttribute(p, v);
+		}
+	};
+	const inDefs = (el: Element) => {
+		for (let e: Element | null = el; e; e = e.parentElement)
+			if (SVG_DEFS.test(e.localName)) return true;
+		return false;
+	};
+	/**
+	 * A copy of an inline svg element with its computed styling written out as attributes: class rules,
+	 * var() and currentColor resolve, <style> and display:none parts drop, and <use> becomes a copy of
+	 * what it references (a <symbol> becomes a nested <svg>), so Figma sees what the page draws.
+	 */
+	const copySvg = (
+		orig: Element,
+		parent: Element | null,
+		depth: number,
+	): Element | null => {
+		const tag = orig.localName;
+		if (tag === "style" || tag === "script") return null;
+		if (parent && !inDefs(orig) && getComputedStyle(orig).display === "none")
+			return null;
+		if (tag === "use" && depth < 4) {
+			const href =
+				orig.getAttribute("href") || orig.getAttribute("xlink:href") || "";
+			const scope = orig.getRootNode() as Document | ShadowRoot;
+			const ref = href.startsWith("#")
+				? scope.getElementById(href.slice(1))
+				: null;
+			if (ref) {
+				const g = document.createElementNS(SVGNS, "g");
+				paintSvg(orig, g, parent);
+				const at = (k: string) =>
+					Number.parseFloat(orig.getAttribute(k) || "0") || 0;
+				const move = [
+					orig.getAttribute("transform"),
+					at("x") || at("y") ? `translate(${at("x")} ${at("y")})` : "",
+				]
+					.filter(Boolean)
+					.join(" ");
+				if (move) g.setAttribute("transform", move);
+				if (ref.localName === "symbol") {
+					// A symbol is a viewport sized by the use (100% of the nearest svg when unset).
+					const vp = (orig as SVGElement).ownerSVGElement;
+					const vb = vp?.viewBox?.baseVal;
+					const size = (k: "width" | "height") =>
+						orig.getAttribute(k) ||
+						String(
+							vb?.[k] ||
+								(vp?.getBoundingClientRect()[k] ?? 0) ||
+								ref.getAttribute("viewBox")?.split(/[\s,]+/)[k === "width" ? 2 : 3] ||
+								0,
+						);
+					const sv = document.createElementNS(SVGNS, "svg");
+					for (const k of ["viewBox", "preserveAspectRatio"]) {
+						const v = ref.getAttribute(k);
+						if (v) sv.setAttribute(k, v);
+					}
+					sv.setAttribute("width", size("width"));
+					sv.setAttribute("height", size("height"));
+					for (const c of Array.from(ref.children)) {
+						const k = copySvg(c, ref, depth + 1);
+						if (k) sv.appendChild(k);
+					}
+					g.appendChild(sv);
+				} else {
+					const k = copySvg(ref, ref.parentElement, depth + 1);
+					if (k) g.appendChild(k);
+				}
+				return g;
+			}
+		}
+		const out = document.createElementNS(orig.namespaceURI || SVGNS, tag);
+		for (const a of Array.from(orig.attributes))
+			out.setAttributeNS(a.namespaceURI, a.name, a.value);
+		paintSvg(orig, out, parent);
+		for (const c of Array.from(orig.childNodes)) {
+			if (c.nodeType === 3) out.appendChild(c.cloneNode());
+			else if (c instanceof Element) {
+				const k = copySvg(c, orig, depth);
+				if (k) out.appendChild(k);
+			}
+		}
+		return out;
+	};
+
 	const nodes: RawNode[] = [];
 	const idOf = new Map<Element, string>();
 	let seq = 0;
@@ -461,7 +696,12 @@ export function walkSlide(slideIndex: number): PageWalk {
 			pre: boolean;
 		};
 		const segs: Seg[] = [];
-		const rects: DOMRect[] = [];
+		// Each rendered rect with the line height of its run, in px (CSS `normal` ~ 1.2 x font size, as ops.ts).
+		const rects: { r: DOMRect; lh: number }[] = [];
+		const lhOf = (cs: CSSStyleDeclaration) =>
+			/^-?[\d.]+px$/.test(cs.lineHeight.trim())
+				? Number.parseFloat(cs.lineHeight)
+				: Number.parseFloat(cs.fontSize) * 1.2;
 		const rest: Element[] = [];
 		const runStyle = (cs: CSSStyleDeclaration, deco: string): TextRun => ({
 			chars: "",
@@ -475,6 +715,13 @@ export function walkSlide(slideIndex: number): PageWalk {
 			letterSpacing: cs.letterSpacing,
 			lineHeight: cs.lineHeight,
 			textDecoration: deco,
+			// Outline text: -webkit-text-stroke draws the glyphs, often with a transparent fill.
+			...(Number.parseFloat(cs.webkitTextStrokeWidth) > 0
+				? {
+						strokeWidth: Number.parseFloat(cs.webkitTextStrokeWidth),
+						strokeColor: fixColors(cs.webkitTextStrokeColor),
+					}
+				: {}),
 		});
 		const decoOf = (cs: CSSStyleDeclaration, outer: string) =>
 			Array.from(
@@ -503,7 +750,8 @@ export function walkSlide(slideIndex: number): PageWalk {
 					});
 					const rg = document.createRange();
 					rg.selectNodeContents(tn);
-					rects.push(...Array.from(rg.getClientRects()));
+					const lh = lhOf(parentCs);
+					for (const r of Array.from(rg.getClientRects())) rects.push({ r, lh });
 				} else if (c instanceof Element) {
 					if (c.localName === "br") {
 						segs.push({
@@ -593,23 +841,32 @@ export function walkSlide(slideIndex: number): PageWalk {
 		const lo = (r: DOMRect) => (vertical ? r.left : r.top);
 		const hi = (r: DOMRect) => (vertical ? r.right : r.bottom);
 		// Visual lines: group rects that overlap across the line (distinct tops break on mixed fonts).
-		const seen = rects
-			.filter((r) => r.width > 0.01 && r.height > 0.01)
-			.sort((a, b) => lo(a) - lo(b) || a.left + a.top - b.left - b.top);
+		const sized = rects
+			.filter(({ r }) => r.width > 0.01 && r.height > 0.01)
+			.sort(
+				(a, b) =>
+					lo(a.r) - lo(b.r) || a.r.left + a.r.top - b.r.left - b.r.top,
+			);
+		const seen = sized.map(({ r }) => r);
 		let lineCount = 0;
 		let lt = 0;
 		let lb = 0;
 		let ft = 0; // first visual line, for the half-leading offset below
 		let fb = 0;
-		for (const r of seen) {
+		// Figma gives each line the tallest line height on it, so a 64px title over a 24px subtitle
+		// is 64 x 1.2 + 24 x 1.2 tall, not twice the larger.
+		const lineLh: number[] = [];
+		for (const { r, lh } of sized) {
 			const overlap = Math.min(lb, hi(r)) - Math.max(lt, lo(r));
 			if (lineCount && overlap / Math.min(hi(r) - lo(r), lb - lt) > 0.5) {
 				lt = Math.min(lt, lo(r));
 				lb = Math.max(lb, hi(r));
+				lineLh[lineCount - 1] = Math.max(lineLh[lineCount - 1], lh);
 			} else {
 				lineCount++;
 				lt = lo(r);
 				lb = hi(r);
+				lineLh.push(lh);
 			}
 			if (lineCount === 1) {
 				ft = lt;
@@ -618,23 +875,18 @@ export function walkSlide(slideIndex: number): PageWalk {
 		}
 		const left = Math.min(...seen.map((r) => r.left));
 		const right = Math.max(...seen.map((r) => r.right));
-		// Range rects are content-area tall; Figma auto-height text is lineCount x line-height (the
+		// Range rects are content-area tall; Figma auto-height text is the sum of its line heights (the
 		// same px rule as ops.ts textProps). Report that line-box geometry so placement and QA agree.
-		const lhPx = Math.max(
-			...runs.map((r) =>
-				/^-?[\d.]+px$/.test(r.lineHeight.trim())
-					? Number.parseFloat(r.lineHeight)
-					: r.fontSize * 1.2,
-			),
-		);
+		const mixed = lineLh.some((h) => Math.abs(h - lineLh[0]) > 0.01);
+		const tall = lineLh.reduce((a, b) => a + b, 0);
 		const top = Math.min(...seen.map((r) => r.top));
 		const bottom = Math.max(...seen.map((r) => r.bottom));
-		const across = ft - (lhPx - (fb - ft)) / 2;
+		const across = ft - ((lineLh[0] ?? 0) - (fb - ft)) / 2;
 		const box = !seen.length
 			? { x: 0, y: 0, w: 0, h: 0 }
 			: vertical
-				? boxOf(across, top, lineCount * lhPx, bottom - top)
-				: boxOf(left, across, right - left, lineCount * lhPx);
+				? boxOf(across, top, tall, bottom - top)
+				: boxOf(left, across, right - left, tall);
 		// Figma has no vertical text: lay it out horizontally and turn it. vertical-* turns glyphs clockwise
 		// (Figma -90); CSS rotations on the way up (clockwise positive) add to that.
 		let rotation = 0;
@@ -652,7 +904,12 @@ export function walkSlide(slideIndex: number): PageWalk {
 			tag: "#text-block",
 			box,
 			style: pick(ocs, TEXT_KEYS),
-			text: rotation ? { runs, lineCount, rotation } : { runs, lineCount },
+			text: {
+				runs,
+				lineCount,
+				...(rotation ? { rotation } : {}),
+				...(mixed ? { lineHeights: lineLh.map(r3) } : {}),
+			},
 		};
 		if (ownerHidden || unseen(box) || offSlide(box)) tb.hidden = true;
 		nodes.push(tb);
@@ -690,6 +947,11 @@ export function walkSlide(slideIndex: number): PageWalk {
 		let anyVisible = false;
 		if (isLeaf(el)) {
 			const tag = el.localName;
+			// The content (image, vector, glyph) sits inside the padding; normalize insets it.
+			Object.assign(
+				node.style,
+				pick(cs, ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"]),
+			);
 			if (tag === "img") {
 				const im = el as HTMLImageElement;
 				node.img = {
@@ -699,7 +961,7 @@ export function walkSlide(slideIndex: number): PageWalk {
 					objectFit: cs.objectFit,
 				};
 			} else if (tag === "svg") {
-				node.svg = el.outerHTML;
+				node.svg = (copySvg(el, null, 0) as Element).outerHTML;
 				if (el.querySelector(smil)) smilLoops.add(el);
 			} else if (tag === "image-slot") {
 				const frame = el.shadowRoot?.querySelector(".frame");

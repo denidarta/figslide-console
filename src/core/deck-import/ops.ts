@@ -224,6 +224,16 @@ export function buildOps(slide: SlideIR, hashes: Map<string, string>): Op[] {
 						...turned,
 						align: n.align,
 						opacity: n.opacity,
+						...(n.stroke
+							? {
+									strokes: {
+										paints: [solid(n.stroke.color)],
+										weights: Array(4).fill(n.stroke.weight),
+										dashed: false,
+										align: "CENTER",
+									},
+								}
+							: {}),
 						// one line cannot wrap: let Figma size it, whatever its own measuring says
 						autoWidth: n.lineCount === 1,
 					});

@@ -6,7 +6,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { basename, dirname, isAbsolute, relative } from "node:path";
+import { basename, dirname, isAbsolute, relative, sep } from "node:path";
 import type { FigmaAPI } from "./figma-api.js";
 import { extractFileKey, withTimeout } from "./figma-api.js";
 import { createChildLogger } from "./logger.js";
@@ -483,7 +483,9 @@ export function displayPath(path: string, root?: string): string {
 	if (!isAbsolute(path)) return path;
 	if (root) {
 		const rel = relative(root, path);
-		if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return rel;
+		// Published docs use "/" on every OS; Windows' relative() returns "\\".
+		if (rel && !rel.startsWith("..") && !isAbsolute(rel))
+			return rel.split(sep).join("/");
 	}
 	return basename(path);
 }

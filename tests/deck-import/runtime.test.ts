@@ -1033,3 +1033,67 @@ describe("runtime patch", () => {
 		await expect(sb.run({ cmd: "nope" })).rejects.toThrow("Unknown");
 	});
 });
+
+describe("runtime fidelity gaps", () => {
+	it("centres a text stroke (outline text) and keeps borders inside", async () => {
+		const { sb } = deckWithOneSlide();
+		const res = (await sb.run({
+			cmd: "buildSlide",
+			slide: slideMeta(),
+			ops: [
+				frameOp("f", null, {
+					strokes: { paints: GREY, weights: [2, 2, 2, 2], dashed: false },
+				}),
+				textOp("t", "f", {
+					strokes: { paints: GREY, weights: [2, 2, 2, 2], dashed: false, align: "CENTER" },
+				}),
+			],
+		})) as { slideId: string };
+		const f = sb.fake.nodes.get(res.slideId)!.children[0];
+		expect(f).toMatchObject({ strokeAlign: "INSIDE", strokeWeight: 2 });
+		expect(f.children[0]).toMatchObject({
+			strokes: GREY,
+			strokeAlign: "CENTER",
+			strokeWeight: 2,
+		});
+	});
+
+	it("dumps paint numbers: solid colours, stroke weights, radii and effects", async () => {
+		const { sb } = deckWithOneSlide();
+		const res = (await sb.run({
+			cmd: "buildSlide",
+			slide: slideMeta(),
+			ops: [
+				frameOp("a", null, {
+					fills: [{ type: "SOLID", color: { r: 1, g: 0, b: 0 }, opacity: 0.5 }],
+					strokes: { paints: GREY, weights: [1, 2, 3, 4], dashed: false },
+					radii: [8, 8, 8, 8],
+					effects: [
+						{
+							type: "DROP_SHADOW",
+							color: { r: 0, g: 0, b: 0, a: 0.3 },
+							offset: { x: 1, y: 4 },
+							radius: 12,
+							spread: 2,
+							visible: true,
+							blendMode: "NORMAL",
+						},
+					],
+				}),
+				frameOp("b", null, { radii: [1, 2, 3, 4] }),
+			],
+		})) as { slideId: string };
+		const d = (await sb.run({ cmd: "dump", slideId: res.slideId })) as any;
+		const [a, b] = d.children;
+		expect(a.fills).toEqual([
+			{ type: "SOLID", hasImage: false, color: { r: 1, g: 0, b: 0, a: 0.5 } },
+		]);
+		expect(a.strokeWeights).toEqual([1, 2, 3, 4]);
+		expect(a.radii).toEqual([8, 8, 8, 8]);
+		expect(a.effectList).toEqual([
+			{ type: "DROP_SHADOW", x: 1, y: 4, radius: 12, spread: 2 },
+		]);
+		expect(b.radii).toEqual([1, 2, 3, 4]);
+		expect(b.strokeWeights).toBeUndefined(); // no strokes
+	});
+});

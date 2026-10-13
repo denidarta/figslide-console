@@ -645,3 +645,240 @@ describe("emittedIds", () => {
 		expect([...emittedIds(normalizeSlide(nodes, meta).root)]).toEqual(["s0-n1", "s0-n2"]);
 	});
 });
+
+describe("fidelity gaps", () => {
+	const flagOf = (transform: string) =>
+		(
+			only(el("s0-n1", "s0-n0", { backgroundColor: WHITE, transform }))[0] as {
+				flags: string[];
+			}
+		).flags;
+
+	it("flags 180deg turns, mirrors and 3D tilts that the IR draws upright", () => {
+		expect(flagOf("matrix(-1, 0, 0, -1, 0, 0)")).toEqual([
+			"unsupported:transform-rotate",
+		]);
+		expect(flagOf("matrix(-1, 0, 0, 1, 0, 0)")).toEqual([
+			"unsupported:transform-mirror",
+		]);
+		expect(flagOf("matrix(1, 0, 0, -1, 0, 0)")).toEqual([
+			"unsupported:transform-mirror",
+		]);
+		// rotateY(30deg)
+		expect(
+			flagOf(
+				"matrix3d(0.866, 0, -0.5, 0, 0, 1, 0, 0, 0.5, 0, 0.866, 0, 0, 0, 0, 1)",
+			),
+		).toEqual(["unsupported:transform-3d"]);
+		// rotateX(180deg) shows as a vertical flip
+		expect(
+			flagOf("matrix3d(1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1)"),
+		).toEqual(["unsupported:transform-mirror"]);
+		// perspective alone draws nothing different
+		expect(
+			flagOf("matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -0.002, 0, 0, 0, 1)"),
+		).toEqual([]);
+	});
+
+	it("flags text under a rotated ancestor, even through non-drawing wrappers", () => {
+		const root = only(
+			el("s0-n1", "s0-n0", { transform: "matrix(-1, 0, 0, -1, 0, 0)" }),
+			el("s0-n2", "s0-n1"),
+			tb("s0-n3", "s0-n2", "Upside down"),
+		);
+		const frame = root[0] as Extract<NodeIR, { kind: "frame" }>;
+		expect(frame.flags).toEqual(["unsupported:transform-rotate"]);
+		expect(frame.children[0]).toMatchObject({
+			kind: "text",
+			flags: ["unsupported:rotated-parent"],
+		});
+		// vertical text already folds the ancestors' turn into its own rotation
+		const vertical = tb("s0-n3", "s0-n2", "Badge");
+		vertical.text = { runs: [run("Badge")], lineCount: 1, rotation: 90 };
+		const turned = only(
+			el("s0-n1", "s0-n0", { transform: "matrix(-1, 0, 0, -1, 0, 0)" }),
+			el("s0-n2", "s0-n1"),
+			vertical,
+		);
+		expect(
+			(turned[0] as Extract<NodeIR, { kind: "frame" }>).children[0].flags,
+		).toEqual([]);
+		// the slide itself turned
+		const s = normalizeSlide(
+			[section({ transform: "matrix(1, 0, 0, -1, 0, 0)" }), tb("s0-n1", "s0-n0", "x")],
+			meta,
+		);
+		expect(s.flags).toEqual(["unsupported:transform-mirror"]);
+		expect(s.root[0].flags).toEqual(["unsupported:rotated-parent"]);
+	});
+
+	it("does not flag a pseudo-element inside a loop region: the gif records it", () => {
+		const s = norm(
+			el("s0-n1", "s0-n0", {}, { loop: true }),
+			el("s0-n2", "s0-n1", {}, { pseudo: true }),
+			el("s0-n3", "s0-n2", {}, { pseudo: true }),
+		);
+		expect(s.flags).toEqual([]);
+		expect(s.root).toMatchObject([{ kind: "gif", id: "s0-n1" }]);
+		// outside the loop it still counts
+		expect(
+			norm(
+				el("s0-n1", "s0-n0", {}, { loop: true }),
+				el("s0-n2", "s0-n0", {}, { pseudo: true }),
+			).flags,
+		).toEqual(["unsupported:pseudo-element"]);
+	});
+
+	describe("outline text (-webkit-text-stroke)", () => {
+		const outline = (id: string, parentId: string, chars: string, extra: Partial<TextRun> = {}) => {
+			const t = tb(id, parentId, chars);
+			t.text = {
+				runs: [
+					{
+						...run(chars),
+						color: "rgba(0, 0, 0, 0)",
+						strokeWidth: 2,
+						strokeColor: "rgb(10, 108, 255)",
+						...extra,
+					},
+				],
+				lineCount: 1,
+			};
+			return t;
+		};
+
+		it("carries the stroke so transparent glyphs still draw their outline", () => {
+			expect(only(outline("s0-n1", "s0-n0", "Outline"))).toMatchObject([
+				{
+					kind: "text",
+					runs: [{ color: "rgba(0, 0, 0, 0)" }],
+					stroke: { color: { r: 10 / 255, g: 108 / 255, b: 1, a: 1 }, weight: 2 },
+					flags: [],
+				},
+			]);
+		});
+
+		it("flags a stroke that only some runs have (Figma strokes the whole node)", () => {
+			const t = outline("s0-n1", "s0-n0", "Out");
+			t.text?.runs.push(run(" solid"));
+			expect(only(t)[0]).toMatchObject({
+				stroke: { weight: 2 },
+				flags: ["approx:text-stroke-mixed"],
+			});
+		});
+
+		it("ignores a stroke with a transparent colour", () => {
+			const t = outline("s0-n1", "s0-n0", "x", { strokeColor: "rgba(0, 0, 0, 0)" });
+			expect(only(t)[0]).not.toHaveProperty("stroke");
+		});
+	});
+
+	it("passes mixed per-line line heights through to the IR", () => {
+		const t = tb("s0-n1", "s0-n0", "Title\nSub");
+		t.text = { runs: [run("Title\nSub")], lineCount: 2, lineHeights: [76.8, 28.8] };
+		expect(only(t)[0]).toMatchObject({ lineHeights: [76.8, 28.8] });
+		expect(only(tb("s0-n1", "s0-n0", "x"))[0]).not.toHaveProperty("lineHeights");
+	});
+
+	describe("box styling on img, svg and icon leaves (R14)", () => {
+		const IMG = { src: "a.png", naturalW: 100, naturalH: 100, objectFit: "cover" };
+		const BOXED = {
+			backgroundColor: "rgb(0, 255, 0)",
+			borderTopWidth: "4px",
+			borderRightWidth: "4px",
+			borderBottomWidth: "4px",
+			borderLeftWidth: "4px",
+			borderTopColor: "rgb(255, 0, 0)",
+			borderRightColor: "rgb(255, 0, 0)",
+			borderBottomColor: "rgb(255, 0, 0)",
+			borderLeftColor: "rgb(255, 0, 0)",
+			borderStyle: "solid",
+			boxShadow: "rgba(0, 0, 0, 0.3) 0px 4px 12px 0px",
+			paddingTop: "10px",
+			paddingRight: "10px",
+			paddingBottom: "10px",
+			paddingLeft: "10px",
+			borderTopLeftRadius: "20px",
+			borderTopRightRadius: "20px",
+			borderBottomRightRadius: "20px",
+			borderBottomLeftRadius: "20px",
+			opacity: "0.5",
+		};
+
+		it("wraps a styled img in a frame that carries fill, border, shadow and opacity", () => {
+			const root = only(
+				el("s0-n1", "s0-n0", BOXED, { tag: "img", img: IMG, box: { x: 800, y: 100, w: 148, h: 148 } }),
+			);
+			expect(root).toMatchObject([
+				{
+					kind: "frame",
+					id: "s0-n1",
+					box: { x: 800, y: 100, w: 148, h: 148 },
+					fills: [{ type: "SOLID" }],
+					strokes: { weights: [4, 4, 4, 4] },
+					effects: [{ type: "DROP_SHADOW", y: 4, blur: 12 }],
+					radii: [20, 20, 20, 20],
+					opacity: 0.5,
+					children: [
+						{
+							kind: "image",
+							id: "s0-n1-c",
+							// inside border + padding
+							box: { x: 814, y: 114, w: 120, h: 120 },
+							radii: [6, 6, 6, 6],
+							opacity: 1,
+						},
+					],
+				},
+			]);
+		});
+
+		it("wraps a styled svg and a styled icon; the icon keeps its icon flag on the vector", () => {
+			const [svg, icon] = only(
+				el("s0-n1", "s0-n0", { backgroundColor: WHITE }, { tag: "svg", svg: "<svg/>" }),
+				el("s0-n2", "s0-n0", { boxShadow: "rgb(0, 0, 0) 0px 0px 4px 0px" }, { tag: "i", iconClass: "icon-phone" }),
+			) as Extract<NodeIR, { kind: "frame" }>[];
+			expect(svg).toMatchObject({ kind: "frame", id: "s0-n1", children: [{ kind: "vector", id: "s0-n1-c", svg: "<svg/>" }] });
+			expect(icon).toMatchObject({
+				kind: "frame",
+				flags: [],
+				children: [{ kind: "vector", id: "s0-n2-c", flags: ["icon:icon-phone"] }],
+			});
+		});
+
+		it("leaves an unstyled leaf alone, but still insets it by its padding", () => {
+			expect(
+				only(el("s0-n1", "s0-n0", { paddingLeft: "10px" }, { tag: "img", img: IMG })),
+			).toMatchObject([
+				{ kind: "image", id: "s0-n1", box: { x: 110, y: 200, w: 290, h: 400 } },
+			]);
+			expect(only(el("s0-n1", "s0-n0", {}, { tag: "img", img: IMG }))).toMatchObject([
+				{ kind: "image", id: "s0-n1", box: BOX },
+			]);
+		});
+
+		it("keeps css flags on the frame and object-fit flags on the image", () => {
+			const root = only(
+				el(
+					"s0-n1",
+					"s0-n0",
+					{ ...BOXED, filter: "blur(2px)" },
+					{ tag: "img", img: { ...IMG, objectFit: "none" } },
+				),
+			);
+			expect(root[0]).toMatchObject({
+				flags: ["unsupported:filter"],
+				children: [{ flags: ["object-fit:none"] }],
+			});
+		});
+
+		it("maps the frame, not the inner content, as the entrance owner", () => {
+			const nodes = [
+				section(),
+				el("s0-n1", "s0-n0", BOXED, { tag: "img", img: IMG }),
+			];
+			const root = normalizeSlide(nodes, meta).root;
+			expect(ownerMap(nodes, root)("s0-n1")).toEqual(["s0-n1"]);
+		});
+	});
+});

@@ -41,24 +41,26 @@ Progress ledger and rulings (R1–R33): `.superpowers/sdd/2026-10-12-html-deck-i
 - [ ] `deck_report`: target is at most 7 of 68 slides flagged, no raster images except bitmaps and loop GIFs, and exactly one `· enter` copy per animated slide
 - [ ] Every bug found: write a failing test first, then fix and commit
 
-## Known gaps (fix when they show up in the live run)
+## Known gaps
 
-- [ ] `deck_mark` and `next` check slide numbers against the HTML source count, not the rendered DOM count
-- [ ] `::before`/`::after` marks inside loop-GIF regions still raise a slide flag, even though the GIF captures them
-- [ ] Outline-only text (`-webkit-text-fill-color: transparent` plus `-webkit-text-stroke`) imports invisible and isn't flagged
-- [ ] 180° rotations, mirrored elements and 3D rotations aren't flagged; a rotated parent doesn't flag the text under it
-- [ ] An `entrance-failed` flag stays after a later successful entrance rebuild
-- [ ] Border, shadow and background on `img`, `svg` and icon elements are dropped (R14)
-- [ ] SVG files that start with a comment or `<!DOCTYPE>` aren't recognized as SVG
-- [ ] Text with mixed font sizes on different lines is measured too tall (max line height × line count), which can flag heading-plus-subtitle blocks
-- [ ] QA has no numeric comparison of fills, strokes, radii or shadows; only the visual check covers them
-- [ ] JS timer loops slower than 300ms aren't detected as loops
-- [ ] Inline SVG styled by external CSS (classes, `var()`, `<use>`) loses that styling; only `currentColor` is handled
+All closed on branch `claude/project-thread-7zxam3`, each with tests (unit, plus a real-Chrome fixture deck `tests/fixtures/deck-import/mini/Gaps.dc.html`):
+
+- [x] `deck_mark` and `next` now use the rendered slide count, stored in `state.json` as `rendered`
+- [x] `::before`/`::after` marks inside loop-GIF regions no longer raise a slide flag
+- [x] Outline-only text (`-webkit-text-fill-color: transparent` plus `-webkit-text-stroke`) imports with a centred text stroke; a stroke on only some runs is flagged `approx:text-stroke-mixed`
+- [x] 180° rotations (`unsupported:transform-rotate`), mirrors (`unsupported:transform-mirror`) and 3D tilts (`unsupported:transform-3d`) are flagged; text under a turned ancestor is flagged `unsupported:rotated-parent` (vertical text excepted, it folds the turn into its own rotation). Still flagged, not drawn: the slide-5 badge's swapped radii and unturned icon remain a visual difference.
+- [x] A successful entrance rebuild in `deck_patch` clears an earlier `entrance-failed` flag
+- [x] Border, shadow and background on `img`, `svg` and icon elements go on a frame around the content; the content sits inside border and padding (R14)
+- [x] SVG files that start with a BOM, XML declaration, comments or `<!DOCTYPE>` are recognized, and Figma gets the `<svg>` element without the prolog
+- [x] Text with mixed font sizes on different lines is measured as the sum of per-line line heights; QA checks its height instead of the line count
+- [x] QA compares fills (type, solid colour with alpha), stroke presence and weights, corner radii and effects (type, offset, blur, spread) against the dump. A `deck_patch` that deliberately changes a paint away from the IR will now show as a QA issue; mark such a slide by eye.
+- [x] JS timer loops slower than 300ms are caught: capture watches one tick of the slowest live `setInterval` or `setTimeout` chain, up to 3s. A deck with such a timer pays that wait on every slide.
+- [x] Inline SVG styled by page CSS (classes, `var()`, `currentColor`, `<style>`, `display:none`, `<use>` of a symbol or element) is written out as attributes before import
 
 ## Housekeeping
 
-- [ ] `tests/component-doc-report-3.test.ts`: 2 failures on Windows from `/` vs `\` path separators (predate this feature)
-- [ ] CI: `npm test` now runs real-Chrome suites (capture and GIF), so CI needs Chrome and network, or those suites need to be skipped there
+- [x] `tests/component-doc-report-3.test.ts`: 2 failures on Windows from `/` vs `\` path separators. `displayPath` now returns `/`; `tests/display-path-windows.test.ts` runs it under win32 path rules on any OS.
+- [ ] CI: `npm test` now runs real-Chrome suites (capture and GIF), so CI needs Chrome and network, or those suites need to be skipped there. Chrome now starts as root (`--no-sandbox` is added when running as uid 0), so a container with Chromium and `DECK_IMPORT_CHROME_PATH` set can run them.
 - [ ] Update the "121 tools" count in README and docs (6 `deck_*` tools added)
 - [ ] Normalize mixed line endings in the working tree (`biome format`)
 - [ ] Delete `.superpowers/sdd/2026-10-12-html-deck-import/` after the live run

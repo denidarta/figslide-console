@@ -16,6 +16,19 @@ const sha1Hex = (b: Uint8Array | string) =>
 const startsWith = (b: Uint8Array, sig: number[], at = 0) =>
 	sig.every((v, i) => b[at + i] === v);
 
+/**
+ * The `<svg ...` element of an SVG document, past any BOM, XML declaration, comments and DOCTYPE (with an
+ * internal subset); null when the text is not an SVG document.
+ */
+export function svgElement(text: string): string | null {
+	const prolog =
+		/^(?:\uFEFF|\s+|<\?xml[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE(?:[^[>]|\[[\s\S]*?\])*>)/i;
+	let rest = text;
+	for (let m = prolog.exec(rest); m; m = prolog.exec(rest))
+		rest = rest.slice(m[0].length);
+	return /^<svg\b/i.test(rest) ? rest : null;
+}
+
 /** Sniffs PNG/JPEG/GIF/WEBP from magic bytes; Figma createImage only takes the first three. */
 function sniffMime(b: Uint8Array): string {
 	if (startsWith(b, [0x89, 0x50, 0x4e, 0x47])) return "image/png";
@@ -27,10 +40,9 @@ function sniffMime(b: Uint8Array): string {
 	) {
 		throw new Error("unsupported image type webp");
 	}
-	// SVG isn't a createImage type; report it so the caller can build vector nodes instead.
-	if (
-		/^\s*<(?:svg\b|\?xml\b)/i.test(new TextDecoder().decode(b.subarray(0, 512)))
-	) {
+	// SVG isn't a createImage type; report it so the caller can build vector nodes instead. A licence
+	// comment or DOCTYPE can push <svg past the first few hundred bytes.
+	if (svgElement(new TextDecoder().decode(b.subarray(0, 64 * 1024))) !== null) {
 		return "image/svg+xml";
 	}
 	throw new Error("unsupported image type (unrecognized bytes)");
