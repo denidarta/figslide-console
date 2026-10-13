@@ -239,6 +239,7 @@ export function normalizeSlide(
 					box,
 					runs,
 					lineCount: n.text.lineCount,
+					...(n.text.rotation ? { rotation: n.text.rotation } : {}),
 					align: ALIGN[s.textAlign as keyof typeof ALIGN] ?? "LEFT",
 					opacity: alpha,
 					flags,
@@ -250,7 +251,14 @@ export function normalizeSlide(
 		if (n.img || n.slot?.src) {
 			const fit = n.img?.objectFit ?? "";
 			const [scaleMode, approx] = OBJECT_FIT[fit] ?? ["FILL", false];
-			if (approx) flags.push(`object-fit:${fit}`);
+			// fill (the <img> default) only stretches when the box changes the aspect ratio; under 1% Figma's crop is invisible.
+			const im = n.img;
+			const keepsAspect =
+				fit === "fill" &&
+				!!im?.naturalW &&
+				!!im.naturalH &&
+				Math.abs((box.w * im.naturalH) / (box.h * im.naturalW) - 1) < 0.01;
+			if (approx && !keepsAspect) flags.push(`object-fit:${fit}`);
 			const src = (n.img?.src ?? n.slot?.src) as string;
 			return [
 				{

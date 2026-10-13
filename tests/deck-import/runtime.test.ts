@@ -141,6 +141,19 @@ describe("runtime buildSlide", () => {
 		expect(slide?.children).toHaveLength(1);
 	});
 
+	it("skips notes without a warning when the API has no speakerNotes", async () => {
+		const sb = new Sandbox();
+		sb.fake.notesApi = false;
+		sb.fake.canCreateSlide = true;
+		const res = (await sb.run({
+			cmd: "buildSlide",
+			slide: slideMeta({ skipped: true, notes: "n" }),
+			ops: [],
+		})) as { slideId: string; warnings: string[] };
+		expect(res.warnings).toEqual([]);
+		expect(sb.fake.nodes.get(res.slideId)?.isSkippedSlide).toBe(true);
+	});
+
 	it("tells the user to add a blank slide when the deck is empty", async () => {
 		const sb = new Sandbox();
 		await expect(
@@ -878,6 +891,22 @@ describe("runtime dump", () => {
 		expect(img.fills).toEqual([{ type: "IMAGE", hasImage: true }]);
 		expect(img.text).toBeUndefined();
 		expect(img.children).toEqual([]);
+	});
+
+	it("turns vertical text and reports its on-slide bounds", async () => {
+		const { sb } = deckWithOneSlide();
+		const res = (await sb.run({
+			cmd: "buildSlide",
+			slide: slideMeta(),
+			ops: [textOp("s0-n1", null, { x: 1870, y: 162, w: 64, h: 24, rotation: 90 })],
+		})) as { slideId: string };
+		const t = sb.fake.nodes.get(res.slideId)!.children[0];
+		expect(t.rotation).toBe(90);
+		expect([t.x, t.y]).toEqual([1870, 162]);
+		t.height = 24; // the fake does not lay text out
+		const d = (await sb.run({ cmd: "dump", slideId: res.slideId })) as any;
+		// turned 90deg counter-clockwise about its origin: the 64px run goes up from y=162
+		expect(d.children[0].box).toEqual({ x: 1870, y: 98, w: 24, h: 64 });
 	});
 
 	it("rejects an unknown node", async () => {

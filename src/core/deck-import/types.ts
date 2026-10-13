@@ -7,7 +7,8 @@ export interface RawNode {
 	tag: string; // lowercased; "#text-block" for text blocks
 	box: Box; // slide-relative, unscaled
 	style: Record<string, string>; // computed style subset (see Task 3)
-	text?: { runs: TextRun[]; lineCount: number };
+	/** rotation: Figma degrees (counter-clockwise) for vertical writing-mode text, which is laid out horizontally then turned. */
+	text?: { runs: TextRun[]; lineCount: number; rotation?: number };
 	svg?: string; // outerHTML for inline <svg>
 	img?: { src: string; naturalW: number; naturalH: number; objectFit: string };
 	iconClass?: string; // e.g. "icon-phone" for Lucide font icons
@@ -57,6 +58,7 @@ export type NodeIR =
 			box: Box;
 			runs: TextRun[];
 			lineCount: number;
+			rotation?: number;
 			align: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
 			opacity: number;
 			flags: string[];

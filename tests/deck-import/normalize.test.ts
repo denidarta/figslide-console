@@ -285,6 +285,16 @@ describe("normalizeSlide", () => {
 		expect(img("none")).toMatchObject({ scaleMode: "FILL", flags: ["object-fit:none"] });
 	});
 
+	it("doesn't flag object-fit fill when the box keeps the image's aspect ratio", () => {
+		const [n] = only(
+			el("s0-n1", "s0-n0", {}, {
+				tag: "img",
+				img: { src: "http://x/a.png", naturalW: 30.2, naturalH: 40, objectFit: "fill" },
+			}),
+		) as Extract<NodeIR, { kind: "image" }>[];
+		expect(n).toMatchObject({ scaleMode: "FILL", flags: [] });
+	});
+
 	it("maps svg to vector and lucide icons to an empty vector with an icon flag", () => {
 		const root = only(
 			el("s0-n1", "s0-n0", { opacity: "0.5" }, { tag: "svg", svg: "<svg></svg>" }),

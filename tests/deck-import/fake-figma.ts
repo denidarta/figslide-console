@@ -33,6 +33,13 @@ export class FNode {
 		this.id = `${++owner.seq}:${owner.seq}`;
 		owner.nodes.set(this.id, this);
 		if (type === "SLIDE") owner.pageSlides.push(this);
+		// Live Figma (2026-10) has no speakerNotes on SlideNode: assigning it throws.
+		if (type === "SLIDE" && !owner.notesApi)
+			Object.defineProperty(this, "speakerNotes", {
+				set() {
+					throw new TypeError("object is not extensible");
+				},
+			});
 	}
 
 	/** Like Figma, WIDTH_AND_HEIGHT re-measures the width (the fake asks owner.autoWidthOf). */
@@ -144,6 +151,8 @@ export class FakeFigma {
 	loadedFonts: { family: string; style: string }[] = [];
 	/** `createSlide` succeeds only when true (an empty Slides deck throws). */
 	canCreateSlide = false;
+	/** Whether SlideNode.speakerNotes exists (it doesn't in the live plugin API). */
+	notesApi = true;
 	missingFamilies = new Set<string>();
 	/** Installed fonts. Styles are spelled the way each family spells them in Figma (Inter: "Semi Bold"). */
 	availableFonts: { family: string; style: string }[] = [

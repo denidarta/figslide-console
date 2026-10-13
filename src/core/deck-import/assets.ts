@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import * as path from "node:path";
+import { PNG } from "pngjs";
 import { PACKAGE_ROOT } from "../resolve-package-root.js";
 
 const FETCH_TIMEOUT_MS = 30_000;
@@ -35,8 +36,43 @@ function sniffMime(b: Uint8Array): string {
 	throw new Error("unsupported image type (unrecognized bytes)");
 }
 
-function done(bytes: Uint8Array): ImageBytes {
-	return { bytes, sha1: sha1Hex(bytes), mime: sniffMime(bytes) };
+// figma.createImage throws "Image is too large" past this on either side.
+const FIGMA_MAX_PX = 4096;
+
+/** Box-filters a PNG down to fit FIGMA_MAX_PX. ponytail: PNG only; an oversize JPEG still fails upload (flagged). */
+function fitPng(bytes: Uint8Array): Uint8Array {
+	const b = Buffer.from(bytes);
+	const w = b.readUInt32BE(16);
+	const h = b.readUInt32BE(20);
+	if (Math.max(w, h) <= FIGMA_MAX_PX) return bytes;
+	const s = Math.max(w, h) / FIGMA_MAX_PX;
+	const src = PNG.sync.read(b);
+	const out = new PNG({
+		width: Math.max(1, Math.round(w / s)),
+		height: Math.max(1, Math.round(h / s)),
+	});
+	for (let y = 0; y < out.height; y++) {
+		const y0 = Math.floor(y * s);
+		const y1 = Math.min(h, Math.max(y0 + 1, Math.floor((y + 1) * s)));
+		for (let x = 0; x < out.width; x++) {
+			const x0 = Math.floor(x * s);
+			const x1 = Math.min(w, Math.max(x0 + 1, Math.floor((x + 1) * s)));
+			const sum = [0, 0, 0, 0];
+			for (let sy = y0; sy < y1; sy++)
+				for (let sx = x0; sx < x1; sx++)
+					for (let c = 0; c < 4; c++) sum[c] += src.data[(sy * w + sx) * 4 + c];
+			const n = (y1 - y0) * (x1 - x0);
+			for (let c = 0; c < 4; c++)
+				out.data[(y * out.width + x) * 4 + c] = Math.round(sum[c] / n);
+		}
+	}
+	return PNG.sync.write(out);
+}
+
+function done(raw: Uint8Array): ImageBytes {
+	const mime = sniffMime(raw);
+	const bytes = mime === "image/png" ? fitPng(raw) : raw;
+	return { bytes, sha1: sha1Hex(bytes), mime };
 }
 
 function decodeDataUri(src: string): Uint8Array {

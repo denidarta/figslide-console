@@ -286,14 +286,23 @@ describe("checkSlide", () => {
 		expect(kinds(at(box(100, 100, 200, 52)).issues)).toEqual(["box"]);
 	});
 
-	it("box: text edges may be off by the 2px width slack on top of the tolerance, horizontally only", () => {
+	it("box: turned text takes the slack on its top and bottom edges instead", () => {
+		const ir = slide([
+			{ ...text("t", box(100, 100, 24, 200)), rotation: 90 } as NodeIR,
+		]);
+		const at = (b: Box) => checkSlide(ir, root(dtext("t", b)));
+		expect(at(box(100, 95, 24, 205)).pass).toBe(true); // top edge 5 away: 3 slack + 2
+		expect(kinds(at(box(105, 100, 24, 200)).issues)).toEqual(["box"]); // left edge has none
+	});
+
+	it("box: text edges may be off by the width slack (1.5%, here 3px) on top of the tolerance, horizontally only", () => {
 		const ir = slide([text("t", box(100, 100, 200, 48))]);
 		const at = (b: Box) => checkSlide(ir, root(dtext("t", b)));
-		// ops widen the box by 2 and shift x by the alignment; Figma may then measure a little off
+		// ops widen the box by 3 and shift x by the alignment; Figma may then measure a little off
 		expect(at(box(98, 100, 204, 48)).pass).toBe(true); // both edges 2 + 2 away
-		expect(at(box(96, 100, 204, 48)).pass).toBe(true); // left edge 4 away
-		expect(kinds(at(box(95, 100, 205, 48)).issues)).toEqual(["box"]); // 5 away
-		expect(kinds(at(box(100, 100, 205, 48)).issues)).toEqual(["box"]); // right edge 5 away
+		expect(at(box(95, 100, 205, 48)).pass).toBe(true); // left edge 5 away
+		expect(kinds(at(box(94, 100, 206, 48)).issues)).toEqual(["box"]); // 6 away
+		expect(kinds(at(box(100, 100, 206, 48)).issues)).toEqual(["box"]); // right edge 6 away
 		// vertical edges keep the plain tolerance
 		expect(at(box(100, 102, 200, 48)).pass).toBe(true);
 		expect(kinds(at(box(100, 103, 200, 48)).issues)).toEqual(["box"]);

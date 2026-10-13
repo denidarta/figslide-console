@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { PNG } from "pngjs";
 import {
 	loadImageBytes,
 	lucideSvg,
@@ -90,6 +91,20 @@ describe("loadImageBytes", () => {
 		const r = await loadImageBytes("x.webp", dir, cacheDir);
 		expect(Buffer.from(r.bytes).equals(DOT)).toBe(true);
 		expect(r.mime).toBe("image/png");
+	});
+
+	it("shrinks a PNG over Figma's 4096px limit, keeping the aspect ratio", async () => {
+		const big = new PNG({ width: 5000, height: 20 });
+		big.data.fill(255);
+		const r = await loadImageBytes(
+			`data:image/png;base64,${PNG.sync.write(big).toString("base64")}`,
+			MINI,
+			cacheDir,
+		);
+		const out = PNG.sync.read(Buffer.from(r.bytes));
+		expect([out.width, out.height]).toEqual([4096, 16]);
+		expect(out.data[0]).toBe(255);
+		expect(r.sha1).toBe(sha1(r.bytes));
 	});
 
 	it("throws for a lone .webp", async () => {

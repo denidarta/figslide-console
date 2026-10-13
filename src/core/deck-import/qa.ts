@@ -1,4 +1,4 @@
-import { firstFamily, TEXT_SLACK } from "./ops.js";
+import { firstFamily, textSlack } from "./ops.js";
 import type {
 	Box,
 	FigmaDumpNode,
@@ -26,14 +26,23 @@ const fmt = (b: Box) =>
 	`${[b.x, b.y, b.w, b.h].map((v) => Math.round(v * 10) / 10).join(",")}`;
 
 /**
- * Largest edge difference, less `slackX` on the left and right edges (text boxes are widened on purpose,
- * see ops TEXT_SLACK); a vector is fitted into its box, so it only has to be centred with one axis filled.
+ * Largest edge difference, less `slack` on the edges along the text run (text boxes are widened on
+ * purpose, see ops textSlack: left/right, or top/bottom for turned text); a vector is fitted into its box,
+ * so it only has to be centred with one axis filled.
  */
-function boxOff(ir: Box, d: Box, fitted: boolean, slackX: number): number {
+function boxOff(
+	ir: Box,
+	d: Box,
+	fitted: boolean,
+	slack: number,
+	alongY = false,
+): number {
 	if (!fitted) {
 		const [a, b] = [edges(ir), edges(d)];
 		return Math.max(
-			...a.map((v, i) => Math.abs(v - b[i]) - (i % 2 === 0 ? slackX : 0)),
+			...a.map(
+				(v, i) => Math.abs(v - b[i]) - (i % 2 === (alongY ? 1 : 0) ? slack : 0),
+			),
 		);
 	}
 	const centre = Math.max(
@@ -105,8 +114,10 @@ export function checkSlide(
 		)
 			add("raster", `${n.kind} node has an image fill`);
 
-		const slackX = n.kind === "text" ? TEXT_SLACK : 0;
-		if (boxOff(n.box, d.box, n.kind === "vector", slackX) > TOL)
+		const turned = n.kind === "text" && !!n.rotation;
+		const slack =
+			n.kind === "text" ? textSlack(turned ? n.box.h : n.box.w) : 0;
+		if (boxOff(n.box, d.box, n.kind === "vector", slack, turned) > TOL)
 			add("box", `expected ${fmt(n.box)} got ${fmt(d.box)} (x,y,w,h)`);
 
 		if (n.kind === "text" && d.text) {

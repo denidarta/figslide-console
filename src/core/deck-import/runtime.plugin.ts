@@ -244,6 +244,11 @@ async function __deckApply(node, p, loadFont) {
 				shift = node.textAlignHorizontal === "CENTER" ? narrower / 2 : node.textAlignHorizontal === "RIGHT" ? narrower : 0;
 			} else node.textAutoResize = "HEIGHT";
 		}
+		// Vertical text: x/y below then place the turned origin (ops put it where reading starts).
+		if (p.rotation !== undefined) {
+			node.rotation = p.rotation;
+			shift = 0;
+		}
 	} else if (p.w !== undefined || p.h !== undefined) {
 		node.resize(
 			Math.max(p.w !== undefined ? p.w : node.width, 0.01),
@@ -351,10 +356,13 @@ async function __deckBuildSlide(cmd) {
 	}
 	try {
 		slide.isSkippedSlide = !!meta.skipped;
-		slide.speakerNotes = meta.notes || "";
 	} catch (e) {
 		warnings.push("slide-meta: " + __deckErr(e));
 	}
+	// The live plugin API has no speakerNotes (assigning throws); notes are best effort.
+	try {
+		slide.speakerNotes = meta.notes || "";
+	} catch (e) {}
 	if (meta.transition || made.cloned) {
 		try {
 			slide.setSlideTransition(meta.transition || __DECK_NO_TRANSITION);
@@ -439,13 +447,33 @@ async function __deckMakeEntrance(cmd) {
 // ---- dump / patch ---------------------------------------------------------------------------------
 
 // ax/ay: the node's absolute (slide-relative) position, accumulated from the parents' x/y.
+// On-slide bounds of a node whose origin is at ax, ay; a turned node (Figma rotation is counter-clockwise)
+// covers the rotated rectangle. ponytail: children of a turned node are still placed unturned.
+function __deckBounds(node, ax, ay) {
+	var r = ((node.rotation || 0) * Math.PI) / 180;
+	if (!r) return { x: ax, y: ay, w: node.width, h: node.height };
+	// rounded so 90deg turns come out exact
+	var c = Math.round(Math.cos(r) * 1e9) / 1e9;
+	var s = Math.round(Math.sin(r) * 1e9) / 1e9;
+	var xs = [0, node.width * c, node.height * s, node.width * c + node.height * s];
+	var ys = [0, -node.width * s, node.height * c, -node.width * s + node.height * c];
+	var x0 = Math.min.apply(null, xs);
+	var y0 = Math.min.apply(null, ys);
+	return {
+		x: ax + x0,
+		y: ay + y0,
+		w: Math.max.apply(null, xs) - x0,
+		h: Math.max.apply(null, ys) - y0,
+	};
+}
+
 function __deckDump(node, ax, ay) {
 	var out = {
 		id: node.id,
 		importId: node.getPluginData("importId") || null,
 		type: node.type,
 		name: node.name,
-		box: { x: ax, y: ay, w: node.width, h: node.height },
+		box: __deckBounds(node, ax, ay),
 		visible: node.visible !== false,
 		fills: [],
 		strokes: Array.isArray(node.strokes) ? node.strokes.length : 0,

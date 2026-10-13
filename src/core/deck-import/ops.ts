@@ -27,11 +27,11 @@ const solid = (c: RGBA): FigmaPaint => ({
 export const SLIDE_SIZE = { w: 1920, h: 1080 };
 
 /**
- * Text boxes are measured to the widest line, to 1/64px; Figma's own measuring can come out a hair
- * wider and wrap the last word. Ops widen every text box by this much (QA tolerates it) and shift x
- * so the aligned edge stays put.
+ * Text boxes are measured to the widest line, to 1/64px; Figma's glyph advances can come out wider
+ * (live run: Geist Bold 104px, 740 vs 734.9px, ~0.7%) and wrap the last word. Ops widen every text box
+ * by this much (QA tolerates it) and shift x so the aligned edge stays put.
  */
-export const TEXT_SLACK = 2;
+export const textSlack = (w: number) => Math.max(2, w * 0.015);
 const SLACK_SHIFT = { LEFT: 0, JUSTIFIED: 0, CENTER: 0.5, RIGHT: 1 } as const;
 
 /**
@@ -205,10 +205,23 @@ export function buildOps(slide: SlideIR, hashes: Map<string, string>): Op[] {
 					const t = textProps(n.runs);
 					if (!t.text) break;
 					const label = t.text.replace(/\s+/g, " ").trim().slice(0, 40);
+					// Vertical text: lay out along the column (w = box height), then turn about the origin,
+					// which sits where reading starts. ponytail: only ±90; slack shift ignored (no centred columns yet).
+					const turned =
+						n.rotation === 90 || n.rotation === -90
+							? {
+									x: n.rotation === 90 ? geo.x : geo.x + geo.w,
+									y: n.rotation === 90 ? geo.y + geo.h : geo.y,
+									w: geo.h + textSlack(geo.h),
+									h: geo.w,
+									rotation: n.rotation,
+								}
+							: null;
 					push("text", label || "Text", {
 						...t,
-						x: geo.x - TEXT_SLACK * SLACK_SHIFT[n.align],
-						w: geo.w + TEXT_SLACK,
+						x: geo.x - textSlack(geo.w) * SLACK_SHIFT[n.align],
+						w: geo.w + textSlack(geo.w),
+						...turned,
 						align: n.align,
 						opacity: n.opacity,
 						// one line cannot wrap: let Figma size it, whatever its own measuring says

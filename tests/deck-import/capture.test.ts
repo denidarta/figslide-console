@@ -261,7 +261,9 @@ describe("DeckSession (real Chrome)", () => {
 <div id="pe-empty" style="position:absolute;left:1300px;top:600px;width:100px;height:100px"></div>
 <div id="pe-clear" style="position:absolute;left:1500px;top:600px;width:100px;height:100px"></div>
 <div id="pe-none" style="position:absolute;left:1700px;top:600px;width:100px;height:100px"></div>
-<canvas width="10" height="10" style="position:absolute;left:100px;top:800px;width:100px;height:100px"></canvas>`;
+<canvas width="10" height="10" style="position:absolute;left:100px;top:800px;width:100px;height:100px"></canvas>
+<div style="position:absolute;left:300px;top:800px;transform:rotate(180deg);writing-mode:vertical-rl"><span style="font-size:24px;line-height:24px;white-space:nowrap">Trust</span></div>
+<div style="position:absolute;left:400px;top:800px;writing-mode:vertical-rl"><span style="font-size:24px;line-height:24px;white-space:nowrap">Down</span></div>`;
 		let nodes: RawNode[];
 		const at = (x: number, y = 600) =>
 			nodes.find(
@@ -313,6 +315,19 @@ describe("DeckSession (real Chrome)", () => {
 			expect(at(1500)?.pseudo).toBeFalsy(); // opacity 0
 			expect(at(1700)?.pseudo).toBeFalsy(); // content: none
 			expect(at(100)?.pseudo).toBeFalsy(); // no pseudo-elements at all
+		});
+
+		it("captures vertical writing-mode text as rotated, with its box along the column", () => {
+			const block = (chars: string) =>
+				nodes.find((n) => n.text?.runs[0].chars === chars);
+			const up = block("Trust"); // vertical-rl turned 180deg: reads bottom to top
+			expect(up?.text?.rotation).toBe(90);
+			expect(up?.text?.lineCount).toBe(1);
+			expect(up?.box.w).toBeCloseTo(24, 0); // one 24px line thick
+			expect(up?.box.h).toBeGreaterThan(40); // the word runs down the column
+			expect(block("Down")?.text?.rotation).toBe(-90);
+			// horizontal text carries no rotation
+			expect(nodes.find((n) => n.text?.runs[0].chars === "Gradient")?.text?.rotation).toBeUndefined();
 		});
 
 		it("keeps a canvas as a node so normalize can flag it", () => {

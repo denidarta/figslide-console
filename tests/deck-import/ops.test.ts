@@ -317,9 +317,9 @@ describe("buildOps", () => {
 			new Map(),
 		);
 		expect(op.props).toMatchObject({
-			x: 9, // centred text: 2px width slack, shifted by 1
+			x: 7.75, // centred text: 1.5% (4.5px) width slack, shifted by half
 			y: 20,
-			w: 302,
+			w: 304.5,
 			h: 60,
 			text: "Hello world",
 			align: "CENTER",
@@ -368,7 +368,7 @@ describe("buildOps", () => {
 		]);
 	});
 
-	it("gives text 2px of width slack, shifted by alignment, so Figma never wraps the last word", () => {
+	it("gives text 1.5% (at least 2px) of width slack, shifted by alignment, so Figma never wraps the last word", () => {
 		const geo = (align: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED") => {
 			const [op] = buildOps(
 				slide([
@@ -378,10 +378,27 @@ describe("buildOps", () => {
 			);
 			return { x: op.props.x, w: op.props.w, y: op.props.y, h: op.props.h };
 		};
-		expect(geo("LEFT")).toEqual({ x: 100, w: 302, y: 20, h: 60 });
-		expect(geo("CENTER")).toEqual({ x: 99, w: 302, y: 20, h: 60 });
-		expect(geo("RIGHT")).toEqual({ x: 98, w: 302, y: 20, h: 60 });
-		expect(geo("JUSTIFIED")).toEqual({ x: 100, w: 302, y: 20, h: 60 });
+		expect(geo("LEFT")).toEqual({ x: 100, w: 304.5, y: 20, h: 60 });
+		expect(geo("CENTER")).toEqual({ x: 97.75, w: 304.5, y: 20, h: 60 });
+		expect(geo("RIGHT")).toEqual({ x: 95.5, w: 304.5, y: 20, h: 60 });
+		expect(geo("JUSTIFIED")).toEqual({ x: 100, w: 304.5, y: 20, h: 60 });
+	});
+
+	it("lays vertical text out along the column and turns it, anchored where reading starts", () => {
+		const geo = (rotation: number) => {
+			const [op] = buildOps(
+				slide([
+					{ ...text("t", box(1870, 100, 24, 62)), lineCount: 1, rotation } as NodeIR,
+				]),
+				new Map(),
+			);
+			const { x, y, w, h, rotation: r } = op.props;
+			return { x, y, w, h, r };
+		};
+		// reads bottom to top: origin at the bottom-left of the box
+		expect(geo(90)).toEqual({ x: 1870, y: 162, w: 64, h: 24, r: 90 });
+		// reads top to bottom: origin at the top-right
+		expect(geo(-90)).toEqual({ x: 1894, y: 100, w: 64, h: 24, r: -90 });
 	});
 
 	it("applies the slack relative to the parent and marks only single-line text as auto-width", () => {

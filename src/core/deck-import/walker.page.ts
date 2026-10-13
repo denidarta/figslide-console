@@ -588,24 +588,28 @@ export function walkSlide(slideIndex: number): PageWalk {
 		}
 		if (!runs.length) return rest;
 
-		// Visual lines: group rects that overlap vertically (distinct tops break on mixed fonts).
+		// Vertical writing modes stack lines as columns: everything below runs across x instead of y.
+		const vertical = /^(vertical|sideways)/.test(ocs.writingMode);
+		const lo = (r: DOMRect) => (vertical ? r.left : r.top);
+		const hi = (r: DOMRect) => (vertical ? r.right : r.bottom);
+		// Visual lines: group rects that overlap across the line (distinct tops break on mixed fonts).
 		const seen = rects
 			.filter((r) => r.width > 0.01 && r.height > 0.01)
-			.sort((a, b) => a.top - b.top || a.left - b.left);
+			.sort((a, b) => lo(a) - lo(b) || a.left + a.top - b.left - b.top);
 		let lineCount = 0;
 		let lt = 0;
 		let lb = 0;
 		let ft = 0; // first visual line, for the half-leading offset below
 		let fb = 0;
 		for (const r of seen) {
-			const overlap = Math.min(lb, r.bottom) - Math.max(lt, r.top);
-			if (lineCount && overlap / Math.min(r.height, lb - lt) > 0.5) {
-				lt = Math.min(lt, r.top);
-				lb = Math.max(lb, r.bottom);
+			const overlap = Math.min(lb, hi(r)) - Math.max(lt, lo(r));
+			if (lineCount && overlap / Math.min(hi(r) - lo(r), lb - lt) > 0.5) {
+				lt = Math.min(lt, lo(r));
+				lb = Math.max(lb, hi(r));
 			} else {
 				lineCount++;
-				lt = r.top;
-				lb = r.bottom;
+				lt = lo(r);
+				lb = hi(r);
 			}
 			if (lineCount === 1) {
 				ft = lt;
@@ -623,16 +627,32 @@ export function walkSlide(slideIndex: number): PageWalk {
 					: r.fontSize * 1.2,
 			),
 		);
-		const box = seen.length
-			? boxOf(left, ft - (lhPx - (fb - ft)) / 2, right - left, lineCount * lhPx)
-			: { x: 0, y: 0, w: 0, h: 0 };
+		const top = Math.min(...seen.map((r) => r.top));
+		const bottom = Math.max(...seen.map((r) => r.bottom));
+		const across = ft - (lhPx - (fb - ft)) / 2;
+		const box = !seen.length
+			? { x: 0, y: 0, w: 0, h: 0 }
+			: vertical
+				? boxOf(across, top, lineCount * lhPx, bottom - top)
+				: boxOf(left, across, right - left, lineCount * lhPx);
+		// Figma has no vertical text: lay it out horizontally and turn it. vertical-* turns glyphs clockwise
+		// (Figma -90); CSS rotations on the way up (clockwise positive) add to that.
+		let rotation = 0;
+		if (vertical) {
+			let deg = ocs.writingMode === "sideways-lr" ? 90 : -90;
+			for (let e: Element | null = owner; e; e = e.parentElement) {
+				const m = /^matrix\(([^,]+), ([^,]+)/.exec(getComputedStyle(e).transform);
+				if (m) deg -= (Math.atan2(Number(m[2]), Number(m[1])) * 180) / Math.PI;
+			}
+			rotation = ((((Math.round(deg) % 360) + 540) % 360) - 180) || 0;
+		}
 		const tb: RawNode = {
 			id: nextId(),
 			parentId: ownerId,
 			tag: "#text-block",
 			box,
 			style: pick(ocs, TEXT_KEYS),
-			text: { runs, lineCount },
+			text: rotation ? { runs, lineCount, rotation } : { runs, lineCount },
 		};
 		if (ownerHidden || unseen(box) || offSlide(box)) tb.hidden = true;
 		nodes.push(tb);
