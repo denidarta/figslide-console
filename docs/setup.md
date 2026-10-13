@@ -673,7 +673,7 @@ For reference, the Codex GUI fields map directly to the [NPX JSON configuration]
 # Check your version
 node --version
 
-# Should show v18.x.x or higher
+# Should show v22.12.0 or higher
 ```
 
 If using **NVM** and having issues, try using the absolute path to Node:

@@ -123,6 +123,8 @@ describe("DeckSession (real Chrome)", () => {
 			expect(nodes.filter((n) => n.svg)).toHaveLength(1);
 			expect(nodes.find((n) => n.svg)?.svg).toMatch(/^<svg[\s>]/);
 			expect(nodes.filter((n) => n.iconClass === "icon-phone")).toHaveLength(1);
+			// Lucide draws its glyph with ::before; the icon itself becomes a vector, so no pseudo flag
+			expect(nodes.find((n) => n.iconClass === "icon-phone")?.pseudo).toBeFalsy();
 			const slot = nodes.filter((n) => n.slot);
 			expect(slot).toHaveLength(1);
 			expect(slot[0].slot).toMatchObject({
