@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
+import { describeWithChrome } from "../helpers/chrome.js";
 import { DeckSession } from "../../src/core/deck-import/capture.js";
 import type { RawAnim, RawNode } from "../../src/core/deck-import/types.js";
 
@@ -9,7 +10,7 @@ jest.setTimeout(60_000);
 
 const MINI = path.resolve(__dirname, "../fixtures/deck-import/mini");
 
-describe("DeckSession (real Chrome)", () => {
+describeWithChrome("DeckSession (real Chrome)", () => {
 	let session: DeckSession;
 	let tmp: string;
 

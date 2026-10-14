@@ -65,10 +65,19 @@ jobs:
 
       - run: npm ci
 
+      # The deck-import suites (capture, capture-gaps, gif) drive a real headless
+      # Chrome. Install one and point the tests at it.
+      - name: Install Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+
       # Gate the release on the same checks used locally. prepublishOnly runs
       # the full build again during publish; running it here surfaces a failure
       # before anything reaches the registry.
-      - run: npm test
+      - name: Test
+        run: npm test
+        env:
+          DECK_IMPORT_CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
       - run: npm run build
 
       - name: Verify tag matches package.json

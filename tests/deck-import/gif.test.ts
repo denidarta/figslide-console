@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { describeWithChrome } from "../helpers/chrome.js";
 import { DeckSession } from "../../src/core/deck-import/capture.js";
 import {
 	chunkBase64,
@@ -45,7 +46,7 @@ function parseGif(b: Uint8Array) {
 	};
 }
 
-describe("recordLoop (real Chrome)", () => {
+describeWithChrome("recordLoop (real Chrome)", () => {
 	let session: DeckSession;
 	let nodes: RawNode[];
 	let float: Box;

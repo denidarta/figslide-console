@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { describeWithChrome } from "../helpers/chrome.js";
 import { DeckSession } from "../../src/core/deck-import/capture.js";
 import type { RawNode } from "../../src/core/deck-import/types.js";
 
@@ -6,7 +7,7 @@ jest.setTimeout(60_000);
 
 const MINI = path.resolve(__dirname, "../fixtures/deck-import/mini");
 
-describe("DeckSession fidelity gaps (real Chrome)", () => {
+describeWithChrome("DeckSession fidelity gaps (real Chrome)", () => {
 	let session: DeckSession;
 	let nodes: RawNode[];
 	const textStarting = (chars: string) =>
