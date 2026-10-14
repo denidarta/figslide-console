@@ -25,19 +25,30 @@ function backdropBlur(s: Style): number {
 	return m ? Number.parseFloat(m[1]) * 2 : 0;
 }
 
-/** True for a matrix with a rotation or skew part (b or c set); translate and scale draw correctly. */
-function rotates(transform: string | undefined): boolean {
+/**
+ * What a computed transform does that the IR cannot draw: a 3D turn (z parts set), a mirror (negative
+ * determinant), or a rotation / skew (b or c set, or a 180deg turn, which flips both axes). Translate and
+ * scale draw correctly. null when none.
+ */
+function transformFlag(transform: string | undefined): string | null {
 	const m = /^matrix(3d)?\(([^)]*)\)$/.exec((transform ?? "").trim());
-	if (!m) return false;
+	if (!m) return null;
 	const v = m[2].split(",").map((x) => Number.parseFloat(x));
-	const [b, c] = m[1] ? [v[1], v[4]] : [v[1], v[2]]; // matrix3d is column-major: m12, m21
-	return Math.abs(b) > 1e-6 || Math.abs(c) > 1e-6;
+	const set = (x: number) => Math.abs(x) > 1e-6;
+	// matrix3d is column-major: m13, m23, m31, m32 tilt the plane out of the screen
+	if (m[1] && [v[2], v[6], v[8], v[9]].some(set))
+		return "unsupported:transform-3d";
+	const [a, b, c, d] = m[1] ? [v[0], v[1], v[4], v[5]] : v;
+	if (a * d - b * c < 0) return "unsupported:transform-mirror";
+	if (set(b) || set(c) || a < 0) return "unsupported:transform-rotate";
+	return null;
 }
 
 /** Features the IR cannot carry, so the report can name them. */
 function flagsOf(s: Style): string[] {
 	const f: string[] = [];
-	if (rotates(s.transform)) f.push("unsupported:transform-rotate");
+	const turn = transformFlag(s.transform);
+	if (turn) f.push(turn);
 	if (!isNone(s.clipPath)) f.push("unsupported:clip-path");
 	if (!isNone(s.maskImage)) f.push("unsupported:mask-image");
 	if (s.mixBlendMode && s.mixBlendMode !== "normal")
@@ -69,6 +80,9 @@ function strokesOf(s: Style): StrokeIR | null {
 		dashed: /dashed|dotted/.test(s.borderStyle ?? ""),
 	};
 }
+
+/** Id suffix of an img / svg / icon drawn inside the frame that carries its box styling. */
+export const CONTENT_SUFFIX = "-c";
 
 /** Elements the walker keeps as leaves but the IR has no node for. */
 const UNSUPPORTED_LEAF = /^(canvas|video|iframe|object|embed|audio)$/;
@@ -200,12 +214,21 @@ export function normalizeSlide(
 	};
 
 	const root = nodes.find((n) => n.parentId === null);
+	/** True when `n` or an ancestor is a loop owner: its whole subtree is recorded into the gif. */
+	const inLoop = (n: RawNode): boolean => {
+		for (let p: RawNode | undefined = n; p; p = p.parentId ? byId.get(p.parentId) : undefined)
+			if (p.loop) return true;
+		return false;
+	};
 	// Dropped silently otherwise: a visible ::before/::after has no node of its own to carry a flag.
+	// One inside a loop region is drawn into its gif, so it is not lost.
 	const slideFlags = new Set(root ? flagsOf(root.style) : []);
 	for (const n of nodes)
-		if (n.pseudo && !n.hidden) slideFlags.add("unsupported:pseudo-element");
+		if (n.pseudo && !n.hidden && !inLoop(n))
+			slideFlags.add("unsupported:pseudo-element");
 
-	const build = (n: RawNode): NodeIR[] => {
+	/** `turned`: an ancestor rotates, mirrors or tilts, which the IR draws upright. */
+	const build = (n: RawNode, turned: boolean): NodeIR[] => {
 		// A loop owner is measured at t=0 and may look hidden (e.g. collapsed); it is still a gif.
 		if (n.hidden && !n.loop) return [];
 		const s = n.style;
@@ -221,6 +244,8 @@ export function normalizeSlide(
 		const alpha = Number.isNaN(opacity) ? 1 : opacity;
 		if (n.tag === "#text-block") {
 			if (!n.text) return [];
+			// Vertical text already folds its ancestors' turns into its own rotation (walker).
+			if (turned && !n.text.rotation) flags.push("unsupported:rotated-parent");
 			let runs = transformRuns(n.text.runs, s.textTransform);
 			// background-clip:text leaves the glyphs transparent and shows the background through them.
 			if (runs.some((r) => isTransparent(r.color)) && clipAncestor(n)) {
@@ -232,6 +257,22 @@ export function normalizeSlide(
 					flags.push("approx:background-clip-text");
 				} else flags.push("unsupported:background-clip-text");
 			}
+			// -webkit-text-stroke: Figma strokes a whole text node, so one stroke serves every run.
+			const stroked = runs.filter((r) => r.strokeWidth && r.strokeColor);
+			const strokeColor = stroked[0] && parseColor(stroked[0].strokeColor as string);
+			const stroke = strokeColor
+				? { color: strokeColor, weight: stroked[0].strokeWidth as number }
+				: undefined;
+			if (
+				stroke &&
+				runs.some(
+					(r) =>
+						r.chars.trim() &&
+						(r.strokeWidth !== stroke.weight ||
+							r.strokeColor !== stroked[0].strokeColor),
+				)
+			)
+				flags.push("approx:text-stroke-mixed");
 			return [
 				{
 					kind: "text",
@@ -240,6 +281,8 @@ export function normalizeSlide(
 					runs,
 					lineCount: n.text.lineCount,
 					...(n.text.rotation ? { rotation: n.text.rotation } : {}),
+					...(n.text.lineHeights ? { lineHeights: n.text.lineHeights } : {}),
+					...(stroke ? { stroke } : {}),
 					align: ALIGN[s.textAlign as keyof typeof ALIGN] ?? "LEFT",
 					opacity: alpha,
 					flags,
@@ -248,6 +291,69 @@ export function normalizeSlide(
 		}
 
 		const radii = parseRadii(s, box);
+		/**
+		 * img / svg / icon leaves draw their own content; a background, border or shadow on the element
+		 * goes on a frame around it, and the content sits in the content box (inside border and padding).
+		 */
+		const leaf = (
+			content: NodeIR & { kind: "image" | "vector" },
+			own: string[],
+		): NodeIR[] => {
+			const px = (k: string) => Number.parseFloat(s[k] ?? "") || 0;
+			const inset = ["Top", "Right", "Bottom", "Left"].map(
+				(k) => px(`border${k}Width`) + px(`padding${k}`),
+			);
+			const inner = {
+				x: box.x + inset[3],
+				y: box.y + inset[0],
+				w: Math.max(0, box.w - inset[1] - inset[3]),
+				h: Math.max(0, box.h - inset[0] - inset[2]),
+			};
+			const moved = inset.some((v) => v > 0) ? inner : box;
+			// Inner corners shrink by the inset on either side (CSS clamps them at 0).
+			const innerRadii = radii.map((r, i) =>
+				Math.max(0, r - Math.max(inset[i], inset[(i + 3) % 4])),
+			) as typeof radii;
+			const fills = parseBackground(
+				s.backgroundColor ?? "",
+				s.backgroundImage ?? "",
+			);
+			const strokes = strokesOf(s);
+			const effects = parseShadows(s.boxShadow ?? "");
+			if (!fills.length && !strokes && !effects.length)
+				return [
+					{
+						...content,
+						box: moved,
+						...(content.kind === "image" ? { radii: innerRadii } : {}),
+						flags: [...flags, ...own],
+					},
+				];
+			return [
+				{
+					kind: "frame",
+					id,
+					box,
+					fills,
+					strokes,
+					radii,
+					effects,
+					clip: false,
+					opacity: alpha,
+					children: [
+						{
+							...content,
+							id: `${id}${CONTENT_SUFFIX}`,
+							box: moved,
+							...(content.kind === "image" ? { radii: innerRadii } : {}),
+							opacity: 1,
+							flags: own,
+						},
+					],
+					flags,
+				},
+			];
+		};
 		if (n.img || n.slot?.src) {
 			const fit = n.img?.objectFit ?? "";
 			const [scaleMode, approx] = OBJECT_FIT[fit] ?? ["FILL", false];
@@ -258,9 +364,8 @@ export function normalizeSlide(
 				!!im?.naturalW &&
 				!!im.naturalH &&
 				Math.abs((box.w * im.naturalH) / (box.h * im.naturalW) - 1) < 0.01;
-			if (approx && !keepsAspect) flags.push(`object-fit:${fit}`);
 			const src = (n.img?.src ?? n.slot?.src) as string;
-			return [
+			return leaf(
 				{
 					kind: "image",
 					id,
@@ -269,9 +374,10 @@ export function normalizeSlide(
 					scaleMode,
 					radii,
 					opacity: alpha,
-					flags,
+					flags: [],
 				},
-			];
+				approx && !keepsAspect ? [`object-fit:${fit}`] : [],
+			);
 		}
 		if (n.slot) {
 			const name = `Image slot · ${n.slot.placeholder}`;
@@ -279,13 +385,14 @@ export function normalizeSlide(
 		}
 		if (n.svg !== undefined || n.iconClass) {
 			// Lucide icons get their SVG filled in later, keyed by the flag.
-			if (n.iconClass) flags.push(`icon:${n.iconClass}`);
-			return [
-				{ kind: "vector", id, box, svg: n.svg ?? "", opacity: alpha, flags },
-			];
+			return leaf(
+				{ kind: "vector", id, box, svg: n.svg ?? "", opacity: alpha, flags: [] },
+				n.iconClass ? [`icon:${n.iconClass}`] : [],
+			);
 		}
 
-		const children = (kids.get(id) ?? []).flatMap(build);
+		const turns = turned || flags.some((f) => f.startsWith("unsupported:transform-"));
+		const children = (kids.get(id) ?? []).flatMap((c) => build(c, turns));
 		// The background of a background-clip:text element shows only through its glyphs, not as a box.
 		const fills = clipsText(s)
 			? []
@@ -324,7 +431,10 @@ export function normalizeSlide(
 	};
 
 	// build() adds the unsupported-leaf flags as it goes, so run it before the flags are read.
-	const tree = root ? (kids.get(root.id) ?? []).flatMap(build) : [];
+	const rootTurns = !!root && transformFlag(root.style.transform) !== null;
+	const tree = root
+		? (kids.get(root.id) ?? []).flatMap((c) => build(c, rootTurns))
+		: [];
 	return {
 		index: meta.index,
 		name: meta.name,

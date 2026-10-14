@@ -486,3 +486,21 @@ describe("figmaPaints", () => {
 		expect(p.gradientTransform[0][2]).toBeCloseTo(0.5 - 0.5 * s);
 	});
 });
+
+describe("buildOps outline text", () => {
+	it("gives stroked text a centred stroke at the run's width", () => {
+		const t: NodeIR = {
+			...(text("t", box(0, 0, 100, 48)) as Extract<NodeIR, { kind: "text" }>),
+			stroke: { color: { r: 0, g: 0, b: 1, a: 1 }, weight: 2 },
+		};
+		const [op] = buildOps(slide([t]), new Map());
+		expect(op.props.strokes).toEqual({
+			paints: [{ type: "SOLID", color: { r: 0, g: 0, b: 1 }, opacity: 1 }],
+			weights: [2, 2, 2, 2],
+			dashed: false,
+			align: "CENTER",
+		});
+		const [plain] = buildOps(slide([text("t", box(0, 0, 100, 48))]), new Map());
+		expect(plain.props).not.toHaveProperty("strokes");
+	});
+});

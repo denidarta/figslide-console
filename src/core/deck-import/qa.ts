@@ -5,10 +5,13 @@ import type {
 	NodeIR,
 	QaIssue,
 	QaResult,
+	RGBA,
 	SlideIR,
 } from "./types.js";
 
 const TOL = 2; // px per box edge
+const NUM_TOL = 0.5; // px for stroke weights, radii and effect geometry
+const COLOR_TOL = 0.02; // per 0..1 channel, alpha included
 const SLOT = "Image slot · ";
 
 /** importId -> dump node, over the whole tree; unmarked nodes (a vector's internals) are not IR nodes. */
@@ -52,6 +55,62 @@ function boxOff(
 	const over = Math.max(d.w - ir.w, d.h - ir.h);
 	const gap = Math.min(Math.abs(d.w - ir.w), Math.abs(d.h - ir.h));
 	return Math.max(centre, over, gap);
+}
+
+type Add = (kind: QaIssue["kind"], detail: string) => void;
+const r1 = (v: number) => Math.round(v * 10) / 10;
+const rgba = (c: RGBA) =>
+	`rgba(${[c.r, c.g, c.b].map((v) => Math.round(v * 255)).join(",")},${Math.round(c.a * 100) / 100})`;
+const far = (a: number[], b: number[], tol: number) =>
+	a.length !== b.length || a.some((v, i) => Math.abs(v - b[i]) > tol);
+
+/**
+ * Fills, strokes and effects of a frame against what Figma holds. Only a dump with paint numbers
+ * (effectList, from the current runtime) is checked; counts alone cannot tell a fill from a placeholder.
+ */
+function paintIssues(n: Extract<NodeIR, { kind: "frame" }>, d: FigmaDumpNode, add: Add) {
+	const list = d.effectList;
+	if (!list) return;
+	if (d.fills.length !== n.fills.length)
+		add("fill", `expected ${n.fills.length} fills got ${d.fills.length}`);
+	else
+		n.fills.forEach((f, i) => {
+			const got = d.fills[i];
+			if (got.type !== f.type)
+				add("fill", `fill ${i}: expected ${f.type} got ${got.type}`);
+			else if (f.type === "SOLID" && got.color) {
+				const [a, b] = [f.color, got.color];
+				if (far([a.r, a.g, a.b, a.a], [b.r, b.g, b.b, b.a], COLOR_TOL))
+					add("fill", `fill ${i}: expected ${rgba(a)} got ${rgba(b)}`);
+			}
+		});
+
+	if (!n.strokes !== !d.strokes)
+		add("stroke", n.strokes ? "stroke missing" : "unexpected stroke");
+	else if (n.strokes && d.strokeWeights && far(n.strokes.weights, d.strokeWeights, NUM_TOL))
+		add(
+			"stroke",
+			`expected weights ${n.strokes.weights.join(",")} got ${d.strokeWeights.map(r1).join(",")}`,
+		);
+
+	if (list.length !== n.effects.length) {
+		add("effect", `expected ${n.effects.length} effects got ${list.length}`);
+		return;
+	}
+	n.effects.forEach((e, i) => {
+		const got = list[i];
+		const want =
+			"radius" in e ? [e.radius] : [e.x, e.y, e.blur, e.spread];
+		const have =
+			"radius" in e ? [got.radius] : [got.x, got.y, got.radius, got.spread];
+		if (got.type !== e.type)
+			add("effect", `effect ${i}: expected ${e.type} got ${got.type}`);
+		else if (far(want, have, NUM_TOL))
+			add(
+				"effect",
+				`effect ${i} (${e.type}): expected ${want.join(",")} got ${have.map(r1).join(",")}`,
+			);
+	});
 }
 
 /**
@@ -113,6 +172,12 @@ export function checkSlide(
 			d.fills.some((f) => f.hasImage)
 		)
 			add("raster", `${n.kind} node has an image fill`);
+		if (n.kind === "frame") paintIssues(n, d, add);
+		if ("radii" in n && d.radii && far(n.radii, d.radii, NUM_TOL))
+			add(
+				"radius",
+				`expected ${n.radii.map(r1).join(",")} got ${d.radii.map(r1).join(",")}`,
+			);
 
 		const turned = n.kind === "text" && !!n.rotation;
 		const slack =
@@ -121,7 +186,8 @@ export function checkSlide(
 			add("box", `expected ${fmt(n.box)} got ${fmt(d.box)} (x,y,w,h)`);
 
 		if (n.kind === "text" && d.text) {
-			if (d.text.lineCount !== n.lineCount)
+			// Mixed line heights: the dump's count (height / tallest line) is meaningless; the box check covers the height.
+			if (!n.lineHeights && d.text.lineCount !== n.lineCount)
 				add("lines", `expected ${n.lineCount} lines got ${d.text.lineCount}`);
 			const have = d.text.fonts.map((f) => f.toLowerCase());
 			const missing = new Set<string>();

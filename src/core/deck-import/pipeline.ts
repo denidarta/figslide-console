@@ -1,13 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createChildLogger } from "../logger.js";
-import { loadImageBytes, lucideSvg } from "./assets.js";
+import { loadImageBytes, lucideSvg, svgElement } from "./assets.js";
 import type { DeckSession } from "./capture.js";
 import { parseColorRaw, parseRadii } from "./css.js";
 import { buildEntrance } from "./entrance.js";
 import type { FigmaDeck } from "./figma.js";
 import { recordLoop } from "./gif.js";
-import { emittedIds, normalizeSlide, ownerMap } from "./normalize.js";
+import {
+	CONTENT_SUFFIX,
+	emittedIds,
+	normalizeSlide,
+	ownerMap,
+} from "./normalize.js";
 import { buildOps, SLIDE_SIZE } from "./ops.js";
 import { checkSlide } from "./qa.js";
 import type {
@@ -153,8 +158,12 @@ interface Ctx {
 
 /** The node's computed text color, else the nearest ancestor's, else black. */
 function colorOf(raw: Map<string, RawNode>, id: string): string {
+	// Boxed leaves draw their content under `<id>-c` (normalize CONTENT_SUFFIX).
+	const rawId = id.endsWith(CONTENT_SUFFIX)
+		? id.slice(0, -CONTENT_SUFFIX.length)
+		: id;
 	for (
-		let n = raw.get(id);
+		let n = raw.get(rawId);
 		n;
 		n = n.parentId ? raw.get(n.parentId) : undefined
 	) {
@@ -211,7 +220,9 @@ async function resolveNode(n: NodeIR, ctx: Ctx): Promise<NodeIR | null> {
 	}
 	if (img.mime === "image/svg+xml") {
 		// Never rasterize: an <img> svg is vector artwork. It renders in its own document, so currentColor is black.
-		const { svg } = withColor(new TextDecoder().decode(img.bytes), BLACK);
+		// Figma's importer wants the <svg> element itself, not the document prolog before it.
+		const text = new TextDecoder().decode(img.bytes);
+		const { svg } = withColor(svgElement(text) ?? text, BLACK);
 		return {
 			kind: "vector",
 			id: n.id,

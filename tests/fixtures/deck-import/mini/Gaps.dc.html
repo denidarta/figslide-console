@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>:root{--brand:#0a6cff}.ring{fill:none;stroke:var(--brand);stroke-width:6px}.dot{fill:currentColor}.ghost{display:none}#sprite-star path{fill:#ff8800}</style>
+</helmet>
+<x-import component-from-global-scope="deck-stage" from="./deck-stage.js" width="1920" height="1080" hint-size="100%,100%" data-uneditable="">
+<section data-label="00 Gaps" style="background:#ffffff;font-family:Helvetica,sans-serif;color:#1c2330;position:relative">
+<h1 id="outline" style="position:absolute;left:100px;top:80px;margin:0;font-size:96px;line-height:1;-webkit-text-fill-color:transparent;-webkit-text-stroke:2px #0a6cff">Outline</h1>
+<div id="mixed" style="position:absolute;left:100px;top:300px;font-size:24px;line-height:1.2"><span style="font-size:64px">Title</span><br>Subtitle</div>
+<img id="framed" src="assets/dot.png" alt="dot" style="position:absolute;left:800px;top:100px;width:120px;height:120px;padding:10px;border:4px solid #ff0000;box-shadow:0 4px 12px rgba(0,0,0,0.3);background:#00ff00">
+<svg id="styled" viewBox="0 0 100 100" style="position:absolute;left:1100px;top:100px;width:200px;height:200px;color:#ff0000"><circle class="ring" cx="50" cy="50" r="40"/><circle class="dot" cx="50" cy="50" r="10"/><rect class="ghost" width="10" height="10"/><use href="#star" x="5" y="5" width="20" height="20"/></svg>
+<svg id="sprite" style="position:absolute;width:0;height:0"><defs><symbol id="star" viewBox="0 0 10 10"><g id="sprite-star"><path d="M5 0L10 10H0Z"/></g></symbol></defs></svg>
+</section>
+<section data-label="01 Slow loop" style="background:#ffffff;font-family:Helvetica,sans-serif;color:#1c2330;position:relative">
+<div id="slow" style="position:absolute;left:200px;top:300px;font-size:48px"><span>tick</span></div>
+<div id="calm" style="position:absolute;left:800px;top:300px;font-size:48px">Static</div>
+</section>
+</x-import>
+</x-dc>
+<script>var k=0;setInterval(function(){var c=document.getElementById("slow");if(c&&c.firstChild)c.firstChild.textContent="tick "+(++k)},800)</script>
+</body>
+</html>

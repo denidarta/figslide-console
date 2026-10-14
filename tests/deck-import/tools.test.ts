@@ -430,6 +430,30 @@ describe("deck-import tools", () => {
 			expect(Object.keys(readState().slides)).toEqual(["1", "2", "3", "4", "5"]);
 		});
 
+		it("remembers the rendered count: later slides values and deck_mark use it, not the source", async () => {
+			session.slideCount = () => 5; // listDecks says 3
+			const first = json(
+				await call("deck_import", { zipPath, deck: DECK, limit: 2 }),
+			);
+			expect(first.next).toBe("3-5");
+			expect(readState().rendered).toBe(5);
+			const later = await call("deck_import", {
+				zipPath,
+				deck: DECK,
+				slides: first.next,
+			});
+			expect(later.isError).toBeUndefined();
+			expect(json(later).slides.map((s: any) => s.n)).toEqual([3, 4, 5]);
+			const mark = await call("deck_mark", {
+				zipPath,
+				deck: DECK,
+				slide: 5,
+				status: "passed",
+			});
+			expect(mark.isError).toBeUndefined();
+			expect(readState().slides[5].status).toBe("passed");
+		});
+
 		it("drops never-imported entries beyond a smaller rendered count, keeps imported ones", async () => {
 			writeState({
 				3: slideState("imported", ["5:3"]),
@@ -764,6 +788,19 @@ describe("deck-import tools", () => {
 				const s = readState().slides[1];
 				expect(s.figmaIds).toEqual(["8:1", "9:1"]);
 				expect(s.flags.some((f) => f.startsWith("entrance-failed"))).toBe(true);
+			});
+
+			it("a later successful rebuild clears the entrance-failed flag", async () => {
+				await call("deck_import", { zipPath, deck: DECK, slides: "1" });
+				deck.rebuildEntrance.mockRejectedValueOnce(new Error("clone failed"));
+				await call("deck_patch", patchArgs());
+				expect(
+					readState().slides[1].flags.some((f) => f.startsWith("entrance-failed")),
+				).toBe(true);
+				await call("deck_patch", patchArgs());
+				const s = readState().slides[1];
+				expect(s.figmaIds).toEqual(["9:50", "9:1"]);
+				expect(s.flags.some((f) => f.startsWith("entrance-failed"))).toBe(false);
 			});
 
 			it("a slide without a copy is not rebuilt", async () => {

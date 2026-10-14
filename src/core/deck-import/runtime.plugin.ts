@@ -197,7 +197,8 @@ function __deckApplyStrokes(node, s) {
 	}
 	var w = s.weights;
 	node.strokes = s.paints;
-	node.strokeAlign = "INSIDE";
+	// CSS borders sit inside the box; -webkit-text-stroke is centred on the glyph outline.
+	node.strokeAlign = s.align || "INSIDE";
 	if (w[0] === w[1] && w[1] === w[2] && w[2] === w[3]) node.strokeWeight = w[0];
 	else {
 		node.strokeTopWeight = w[0];
@@ -483,7 +484,31 @@ function __deckDump(node, ax, ay) {
 	};
 	if (Array.isArray(node.fills))
 		out.fills = node.fills.map(function (f) {
-			return { type: f.type, hasImage: f.type === "IMAGE" };
+			var paint = { type: f.type, hasImage: f.type === "IMAGE" };
+			if (f.type === "SOLID" && f.color)
+				paint.color = { r: f.color.r, g: f.color.g, b: f.color.b, a: f.opacity === undefined ? 1 : f.opacity };
+			return paint;
+		});
+	// Numbers for QA's paint checks. A mixed value (figma.mixed is a symbol) falls back to the per-side ones.
+	if (out.strokes) {
+		var sw = node.strokeWeight;
+		if (typeof sw === "number") out.strokeWeights = [sw, sw, sw, sw];
+		else if (typeof node.strokeTopWeight === "number")
+			out.strokeWeights = [node.strokeTopWeight, node.strokeRightWeight, node.strokeBottomWeight, node.strokeLeftWeight];
+	}
+	if (typeof node.cornerRadius === "number")
+		out.radii = [node.cornerRadius, node.cornerRadius, node.cornerRadius, node.cornerRadius];
+	else if (typeof node.topLeftRadius === "number")
+		out.radii = [node.topLeftRadius, node.topRightRadius, node.bottomRightRadius, node.bottomLeftRadius];
+	if (Array.isArray(node.effects))
+		out.effectList = node.effects.map(function (e) {
+			return {
+				type: e.type,
+				x: e.offset ? e.offset.x : 0,
+				y: e.offset ? e.offset.y : 0,
+				radius: e.radius || 0,
+				spread: e.spread || 0,
+			};
 		});
 	if (node.type === "TEXT") {
 		var lh = parseFloat(node.getPluginData("lineHeightPx"));

@@ -6,6 +6,7 @@ import { PNG } from "pngjs";
 import {
 	loadImageBytes,
 	lucideSvg,
+	svgElement,
 } from "../../src/core/deck-import/assets.js";
 
 const MINI = path.join(__dirname, "..", "fixtures", "deck-import", "mini");
@@ -232,6 +233,39 @@ describe("loadImageBytes", () => {
 			cacheDir,
 		);
 		expect(pct.mime).toBe("image/svg+xml");
+	});
+
+	it("recognizes svg files that start with a comment or a DOCTYPE", async () => {
+		const dir = path.join(tmp, "src");
+		fs.mkdirSync(dir);
+		const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>';
+		const licence = `<!-- ${"Licensed under the MIT licence. ".repeat(40)} -->\n`;
+		fs.writeFileSync(path.join(dir, "c.svg"), `${licence}${svg}`);
+		fs.writeFileSync(
+			path.join(dir, "d.svg"),
+			`<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [\n<!ENTITY ns "x">\n]>\n<!-- made by a tool -->\n${svg}`,
+		);
+		for (const f of ["c.svg", "d.svg"])
+			expect((await loadImageBytes(f, dir, cacheDir)).mime).toBe("image/svg+xml");
+		// an HTML error page is still not an image
+		fs.writeFileSync(path.join(dir, "e.svg"), "<!DOCTYPE html><html><svg></svg></html>");
+		await expect(loadImageBytes("e.svg", dir, cacheDir)).rejects.toThrow(
+			"unrecognized bytes",
+		);
+	});
+});
+
+describe("svgElement", () => {
+	const svg = '<svg viewBox="0 0 1 1"/>';
+	it("returns the svg element past the document prolog", () => {
+		expect(svgElement(svg)).toBe(svg);
+		expect(svgElement(`\uFEFF <?xml version="1.0"?><!-- a --><!-- b -->\n${svg}`)).toBe(svg);
+		expect(svgElement(`<!DOCTYPE svg [ <!ENTITY a "b"> ]>${svg}`)).toBe(svg);
+	});
+	it("is null for anything else", () => {
+		expect(svgElement("<html><svg/></html>")).toBeNull();
+		expect(svgElement("<!-- unterminated <svg/>")).toBeNull();
+		expect(svgElement("")).toBeNull();
 	});
 });
 
