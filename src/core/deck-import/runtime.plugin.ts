@@ -268,8 +268,16 @@ function __deckFitVector(node, p) {
 		var s = Math.min(p.w / node.width, p.h / node.height);
 		if (Math.abs(s - 1) > 1e-6) node.rescale(s);
 	}
-	node.x = p.x + (p.w - node.width) / 2;
-	node.y = p.y + (p.h - node.height) / 2;
+	var left = p.x + (p.w - node.width) / 2;
+	var top = p.y + (p.h - node.height) / 2;
+	if (p.rotation === 180) {
+		// Figma turns a node about its top-left corner, so a half turn puts its box up and to the left.
+		node.rotation = 180;
+		left += node.width;
+		top += node.height;
+	}
+	node.x = left;
+	node.y = top;
 	if (p.opacity !== undefined) node.opacity = p.opacity;
 }
 

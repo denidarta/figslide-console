@@ -654,10 +654,12 @@ describe("fidelity gaps", () => {
 			}
 		).flags;
 
-	it("flags 180deg turns, mirrors and 3D tilts that the IR draws upright", () => {
-		expect(flagOf("matrix(-1, 0, 0, -1, 0, 0)")).toEqual([
-			"unsupported:transform-rotate",
-		]);
+	it("flags mirrors and 3D tilts that the IR draws upright; an exact 180deg turn is drawn, not flagged", () => {
+		expect(flagOf("matrix(-1, 0, 0, -1, 0, 0)")).toEqual([]);
+		// 3D 180deg about z is the same half turn but still a matrix3d
+		expect(
+			flagOf("matrix3d(-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)"),
+		).toEqual(["unsupported:transform-rotate"]);
 		expect(flagOf("matrix(-1, 0, 0, 1, 0, 0)")).toEqual([
 			"unsupported:transform-mirror",
 		]);
@@ -680,14 +682,45 @@ describe("fidelity gaps", () => {
 		).toEqual([]);
 	});
 
+	it("draws a half turn: swaps corner radii, turns the icon and keeps horizontal text flagged (slide 5 badge)", () => {
+		const half = { transform: "matrix(-1, 0, 0, -1, 0, 0)" };
+		const corners = {
+			borderTopLeftRadius: "20px",
+			borderTopRightRadius: "4px",
+			borderBottomRightRadius: "0px",
+			borderBottomLeftRadius: "8px",
+		};
+		const frame = only(
+			el("s0-n1", "s0-n0", { ...half, ...corners, backgroundColor: WHITE }),
+			el("s0-n2", "s0-n1", {}, { tag: "svg", svg: "<svg/>" }),
+			el("s0-n3", "s0-n1", corners, {}),
+		)[0] as Extract<NodeIR, { kind: "frame" }>;
+		expect(frame.radii).toEqual([0, 8, 20, 4]);
+		expect(frame.flags).toEqual([]);
+		expect(frame.children[0]).toMatchObject({ kind: "vector", rotation: 180 });
+		// two half turns cancel: no radii swap, no vector turn
+		const back = only(
+			el("s0-n1", "s0-n0", { ...half, backgroundColor: WHITE }),
+			el("s0-n2", "s0-n1", { ...half, ...corners, backgroundColor: WHITE }),
+			el("s0-n3", "s0-n2", {}, { tag: "svg", svg: "<svg/>" }),
+		)[0] as Extract<NodeIR, { kind: "frame" }>;
+		const inner = back.children[0] as Extract<NodeIR, { kind: "frame" }>;
+		expect(inner.radii).toEqual([20, 4, 0, 8]);
+		expect(inner.children[0]).not.toHaveProperty("rotation");
+		// an element that is not turned keeps its radii
+		expect(
+			(only(el("s0-n1", "s0-n0", { ...corners, backgroundColor: WHITE }))[0] as Extract<NodeIR, { kind: "frame" }>).radii,
+		).toEqual([20, 4, 0, 8]);
+	});
+
 	it("flags text under a rotated ancestor, even through non-drawing wrappers", () => {
 		const root = only(
-			el("s0-n1", "s0-n0", { transform: "matrix(-1, 0, 0, -1, 0, 0)" }),
+			el("s0-n1", "s0-n0", { transform: "matrix(-1, 0, 0, -1, 0, 0)", backgroundColor: WHITE }),
 			el("s0-n2", "s0-n1"),
 			tb("s0-n3", "s0-n2", "Upside down"),
 		);
 		const frame = root[0] as Extract<NodeIR, { kind: "frame" }>;
-		expect(frame.flags).toEqual(["unsupported:transform-rotate"]);
+		expect(frame.flags).toEqual([]);
 		expect(frame.children[0]).toMatchObject({
 			kind: "text",
 			flags: ["unsupported:rotated-parent"],
@@ -696,7 +729,7 @@ describe("fidelity gaps", () => {
 		const vertical = tb("s0-n3", "s0-n2", "Badge");
 		vertical.text = { runs: [run("Badge")], lineCount: 1, rotation: 90 };
 		const turned = only(
-			el("s0-n1", "s0-n0", { transform: "matrix(-1, 0, 0, -1, 0, 0)" }),
+			el("s0-n1", "s0-n0", { transform: "matrix(-1, 0, 0, -1, 0, 0)", backgroundColor: WHITE }),
 			el("s0-n2", "s0-n1"),
 			vertical,
 		);

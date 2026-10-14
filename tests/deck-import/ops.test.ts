@@ -244,6 +244,24 @@ describe("buildOps", () => {
 		expect(ops[0].props.svg).toBe("<svg viewBox='0 0 1 1'/>");
 	});
 
+	it("passes a vector's half turn to the runtime", () => {
+		const ops = buildOps(
+			slide([
+				{
+					kind: "vector",
+					id: "v",
+					box: box(0, 0, 24, 24),
+					svg: "<svg/>",
+					opacity: 1,
+					rotation: 180,
+					flags: [],
+				},
+			]),
+			new Map(),
+		);
+		expect(ops[0].props.rotation).toBe(180);
+	});
+
 	it("converts frame decoration to Figma shapes", () => {
 		const f: NodeIR = {
 			...(frame("f", box(0, 0, 200, 100)) as Extract<
