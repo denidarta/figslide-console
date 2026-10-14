@@ -92,6 +92,8 @@ export type NodeIR =
 			box: Box;
 			svg: string;
 			opacity: number;
+			/** 180 when an ancestor (or the element) is turned by an exact half turn. */
+			rotation?: number;
 			flags: string[];
 	  }
 	| {

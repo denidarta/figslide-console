@@ -263,7 +263,11 @@ export function buildOps(slide: SlideIR, hashes: Map<string, string>): Op[] {
 				}
 				case "vector":
 					if (n.svg)
-						push("vector", "Vector", { svg: n.svg, opacity: n.opacity });
+						push("vector", "Vector", {
+							svg: n.svg,
+							opacity: n.opacity,
+							...(n.rotation ? { rotation: n.rotation } : {}),
+						});
 					break;
 				case "slot":
 					push("slot", n.name, { fills: [], radii: n.radii });

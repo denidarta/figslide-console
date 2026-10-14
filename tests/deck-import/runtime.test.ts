@@ -334,6 +334,28 @@ describe("runtime buildSlide", () => {
 		expect(v?.getPluginData("importId")).toBe("v");
 	});
 
+	it("turns a vector by a half turn and keeps it inside its box", async () => {
+		const { sb } = deckWithOneSlide();
+		const res = (await sb.run({
+			cmd: "buildSlide",
+			slide: slideMeta(),
+			ops: [
+				{
+					op: "vector",
+					id: "v",
+					parent: null,
+					name: "Vector #v",
+					props: { x: 10, y: 20, w: 24, h: 24, svg: "<svg/>", rotation: 180 },
+				},
+			],
+		})) as { slideId: string };
+		const v = sb.fake.nodes.get(res.slideId)?.children[0];
+		// Figma turns about the top-left corner, so the origin sits at the box's bottom-right
+		expect(v).toMatchObject({ rotation: 180, x: 34, y: 44 });
+		const d = (await sb.run({ cmd: "dump", slideId: res.slideId })) as any;
+		expect(d.children[0].box).toEqual({ x: 10, y: 20, w: 24, h: 24 });
+	});
+
 	it("reports an op that fails instead of aborting the slide", async () => {
 		const { sb } = deckWithOneSlide();
 		const res = (await sb.run({

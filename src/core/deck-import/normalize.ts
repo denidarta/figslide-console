@@ -44,6 +44,17 @@ function transformFlag(transform: string | undefined): string | null {
 	return null;
 }
 
+/** An exact half turn (rotate(180deg), possibly scaled): both axes flip, nothing skews. The IR can draw it. */
+function isHalfTurn(transform: string | undefined): boolean {
+	const m = /^matrix\(([^)]*)\)$/.exec((transform ?? "").trim());
+	if (!m) return false;
+	const [a, b, c, d] = m[1].split(",").map((x) => Number.parseFloat(x));
+	return Math.abs(b) < 1e-6 && Math.abs(c) < 1e-6 && a < 0 && d < 0;
+}
+
+/** Corner radii of a box seen after a half turn: top-left swaps with bottom-right, top-right with bottom-left. */
+const halfTurnRadii = (r: [number, number, number, number]): typeof r => [r[2], r[3], r[0], r[1]];
+
 /** Features the IR cannot carry, so the report can name them. */
 function flagsOf(s: Style): string[] {
 	const f: string[] = [];
@@ -227,17 +238,26 @@ export function normalizeSlide(
 		if (n.pseudo && !n.hidden && !inLoop(n))
 			slideFlags.add("unsupported:pseudo-element");
 
-	/** `turned`: an ancestor rotates, mirrors or tilts, which the IR draws upright. */
-	const build = (n: RawNode, turned: boolean): NodeIR[] => {
+	/**
+	 * `turned`: an ancestor rotates, mirrors or tilts, which the IR draws upright.
+	 * `half`: the element sits under an odd number of exact half turns. Corner radii swap and
+	 * vectors turn; those are the parts the IR can draw, so a half turn itself is not flagged.
+	 */
+	const build = (n: RawNode, turned: boolean, halfAbove = false): NodeIR[] => {
 		// A loop owner is measured at t=0 and may look hidden (e.g. collapsed); it is still a gif.
 		if (n.hidden && !n.loop) return [];
 		const s = n.style;
 		const flags = flagsOf(s);
+		const ownHalf = isHalfTurn(s.transform);
+		if (ownHalf) flags.splice(flags.indexOf("unsupported:transform-rotate"), 1);
+		const half = halfAbove !== ownHalf;
 		const { id, box } = n;
+		const cornerRadii = () => {
+			const r = parseRadii(s, box);
+			return half ? halfTurnRadii(r) : r;
+		};
 		if (n.loop)
-			return [
-				{ kind: "gif", id, box, gifKey: id, radii: parseRadii(s, box), flags },
-			];
+			return [{ kind: "gif", id, box, gifKey: id, radii: cornerRadii(), flags }];
 		if (UNSUPPORTED_LEAF.test(n.tag)) slideFlags.add(`unsupported:${n.tag}`);
 
 		const opacity = Number.parseFloat(s.opacity ?? "1");
@@ -290,7 +310,7 @@ export function normalizeSlide(
 			];
 		}
 
-		const radii = parseRadii(s, box);
+		const radii = cornerRadii();
 		/**
 		 * img / svg / icon leaves draw their own content; a background, border or shadow on the element
 		 * goes on a frame around it, and the content sits in the content box (inside border and padding).
@@ -386,13 +406,22 @@ export function normalizeSlide(
 		if (n.svg !== undefined || n.iconClass) {
 			// Lucide icons get their SVG filled in later, keyed by the flag.
 			return leaf(
-				{ kind: "vector", id, box, svg: n.svg ?? "", opacity: alpha, flags: [] },
+				{
+					kind: "vector",
+					id,
+					box,
+					svg: n.svg ?? "",
+					opacity: alpha,
+					...(half ? { rotation: 180 } : {}),
+					flags: [],
+				},
 				n.iconClass ? [`icon:${n.iconClass}`] : [],
 			);
 		}
 
-		const turns = turned || flags.some((f) => f.startsWith("unsupported:transform-"));
-		const children = (kids.get(id) ?? []).flatMap((c) => build(c, turns));
+		const turns =
+			turned || ownHalf || flags.some((f) => f.startsWith("unsupported:transform-"));
+		const children = (kids.get(id) ?? []).flatMap((c) => build(c, turns, half));
 		// The background of a background-clip:text element shows only through its glyphs, not as a box.
 		const fills = clipsText(s)
 			? []

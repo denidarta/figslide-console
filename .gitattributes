@@ -1,0 +1,6 @@
+# Keep LF in the repo and in every checkout, including Windows (core.autocrlf off).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.zip binary

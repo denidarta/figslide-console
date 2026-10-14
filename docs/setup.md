@@ -36,9 +36,9 @@ Complete setup instructions for connecting Figma Console MCP to various AI clien
 | Console log streaming | ✅ | ❌ | ❌ |
 | Codebase → design system extraction (`figma_ds_*`) | ✅ | ❌ | ❌ |
 | Requires Node.js | Yes | No | No |
-| **Total tools available** | **121** | **96** after pairing | Read-only subset |
+| **Total tools available** | **127** | **96** after pairing | Read-only subset |
 
-> **Bottom line:** Remote mode is **read-only** until you pair the plugin. Cloud Mode adds **write access** (96 tools) without Node.js. Local (NPX/Git) has **everything** (121 tools) including real-time monitoring.
+> **Bottom line:** Remote mode is **read-only** until you pair the plugin. Cloud Mode adds **write access** (96 tools) without Node.js. Local (NPX/Git) has **everything** (127 tools) including real-time monitoring.
 
 ---
 
@@ -92,7 +92,7 @@ New to MCP servers, JSON configs, and terminal commands? These designer-friendly
 
 **Best for:** Anyone who wants full AI-assisted design and development capabilities with automatic updates.
 
-**What you get:** All 121 tools including design creation, variable management, component instantiation, design-to-code workflows, and Desktop Bridge plugin support.
+**What you get:** All 127 tools including design creation, variable management, component instantiation, design-to-code workflows, and Desktop Bridge plugin support.
 
 ### Prerequisites Checklist
 
@@ -254,7 +254,7 @@ Create a simple frame with a blue background
 
 **Best for:** Users who want more control over when updates happen, or developers who want to contribute to the project.
 
-**What you get:** Same 121 tools as NPX. Updates are manual — you pull and rebuild when you're ready.
+**What you get:** Same 127 tools as NPX. Updates are manual — you pull and rebuild when you're ready.
 
 ### Prerequisites
 
