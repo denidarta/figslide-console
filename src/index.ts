@@ -2242,13 +2242,13 @@ export default {
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Figma Console MCP: a design-system MCP server for Figma and code</title>
 	<link rel="icon" type="image/svg+xml" href="https://docs.figma-console-mcp.southleft.com/favicon.svg">
-	<meta name="description" content="An open-source MCP server for design systems. 121+ tools give AI assistants what they need to manage a design system across Figma and code: health and accessibility audits, design-code parity checks, two-way sync, write access to Figma, and generated docs.">
+	<meta name="description" content="An open-source MCP server for design systems. 127+ tools give AI assistants what they need to manage a design system across Figma and code: health and accessibility audits, design-code parity checks, two-way sync, write access to Figma, and generated docs.">
 
 	<!-- Open Graph -->
 	<meta property="og:type" content="website">
 	<meta property="og:url" content="https://figma-console-mcp.southleft.com">
 	<meta property="og:title" content="Figma Console MCP: keep Figma and code on the same design system">
-	<meta property="og:description" content="An open-source MCP server for design systems. 121+ tools give AI assistants what they need to manage a design system across Figma and code: health and accessibility audits, design-code parity checks, two-way sync, write access to Figma, and generated docs.">
+	<meta property="og:description" content="An open-source MCP server for design systems. 127+ tools give AI assistants what they need to manage a design system across Figma and code: health and accessibility audits, design-code parity checks, two-way sync, write access to Figma, and generated docs.">
 	<meta property="og:image" content="https://docs.figma-console-mcp.southleft.com/images/og-image.jpg">
 	<meta property="og:image:width" content="1200">
 	<meta property="og:image:height" content="630">
@@ -2256,7 +2256,7 @@ export default {
 	<!-- Twitter -->
 	<meta name="twitter:card" content="summary_large_image">
 	<meta name="twitter:title" content="Figma Console MCP: keep Figma and code on the same design system">
-	<meta name="twitter:description" content="An open-source MCP server for design systems. 121+ tools give AI assistants what they need to manage a design system across Figma and code: health and accessibility audits, design-code parity checks, two-way sync, write access to Figma, and generated docs.">
+	<meta name="twitter:description" content="An open-source MCP server for design systems. 127+ tools give AI assistants what they need to manage a design system across Figma and code: health and accessibility audits, design-code parity checks, two-way sync, write access to Figma, and generated docs.">
 	<meta name="twitter:image" content="https://docs.figma-console-mcp.southleft.com/images/og-image.jpg">
 
 	<meta name="theme-color" content="#0F766E">
@@ -3289,7 +3289,7 @@ All values are bound to space/* tokens.</code></pre>
 				<div class="modes">
 					<div class="mode">
 						<h3>Local</h3>
-						<p class="count"><span class="number">121+</span><span class="unit">tools</span></p>
+						<p class="count"><span class="number">127+</span><span class="unit">tools</span></p>
 						<p><strong>Everything</strong>, including writes, checks, and design-system extraction. Runs with npx next to Figma Desktop and the Desktop Bridge plugin.</p>
 					</div>
 					<div class="mode">

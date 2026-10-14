@@ -24,7 +24,7 @@ This page reflects both servers as of September 2026. Figma's server changes oft
   <Card title="Figma Console MCP" icon="terminal">
     **Made by Southleft.** A design-system-focused server that runs on your machine (or in Cloud Mode) and talks to Figma through the Desktop Bridge plugin and the REST API. Most operations are dedicated, schema-validated tools rather than generated scripts, and it also runs arbitrary Plugin API code through `figma_execute`.
 
-    121 tools. Plugin API + REST API. Open source (MIT).
+    127 tools. Plugin API + REST API. Open source (MIT).
   </Card>
 </Columns>
 
@@ -201,7 +201,7 @@ When this comparison was first written, the official Figma MCP was read-only and
 
 <Columns cols={2}>
   <Card title="Set Up Figma Console MCP" icon="rocket" href="/setup">
-    Full 121 tool access in about 10 minutes.
+    Full 127 tool access in about 10 minutes.
   </Card>
   <Card title="Set Up Figma MCP (Official)" icon="figma" href="https://developers.figma.com/docs/figma-mcp-server/">
     Figma's documentation for its MCP server.

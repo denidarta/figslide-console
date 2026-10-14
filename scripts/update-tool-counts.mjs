@@ -37,7 +37,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ── Auto-detection (mirrors release.sh's auto_count_* functions) ────────────
 
-const TOOL_NAME_RE = /"fig(?:ma|jam)_[a-z_]+"/g;
+const TOOL_NAME_RE = /"(?:fig(?:ma|jam)|deck)_[a-z_]+"/g;
 
 function tsFilesUnder(dir) {
   const out = [];
