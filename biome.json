@@ -14,6 +14,7 @@
 	"formatter": {
 		"enabled": true,
 		"indentWidth": 4,
+		"lineEnding": "lf",
 		"lineWidth": 100
 	},
 	"linter": {
